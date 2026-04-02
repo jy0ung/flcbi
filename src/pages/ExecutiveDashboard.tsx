@@ -20,10 +20,10 @@ export default function ExecutiveDashboard() {
   const branchData = React.useMemo(() => {
     const groups = new Map<string, number[]>();
     vehicles.forEach(v => {
-      if (v.bgToDelivery !== null && v.bgToDelivery !== undefined && v.bgToDelivery >= 0) {
-        const arr = groups.get(v.branch) || [];
-        arr.push(v.bgToDelivery);
-        groups.set(v.branch, arr);
+      if (v.bg_to_delivery !== null && v.bg_to_delivery !== undefined && v.bg_to_delivery >= 0) {
+        const arr = groups.get(v.branch_code) || [];
+        arr.push(v.bg_to_delivery);
+        groups.set(v.branch_code, arr);
       }
     });
     return Array.from(groups.entries()).map(([branch, vals]) => ({
