@@ -1,30 +1,87 @@
 import * as XLSX from 'xlsx';
 import { VehicleRaw, DataQualityIssue, VehicleCanonical } from '@/types';
 
-const COLUMN_MAP: Record<string, keyof VehicleRaw> = {
-  'CHASSIS NO.': 'chassisNo',
-  'CHASSIS NO': 'chassisNo',
-  'BG DATE': 'bgDate',
-  'SHIPMENT ETD PKG': 'shipmentEtdPkg',
-  'SHIPMENT ETA KK/TWU/SDK': 'shipmentEtaKkTwuSdk',
-  'SHIPMENT ETA': 'shipmentEtaKkTwuSdk',
-  'DATE RECEIVED BY OUTLET': 'dateReceivedByOutlet',
-  'DELIVERY DATE': 'deliveryDate',
-  'DISB. DATE': 'disbDate',
-  'DISB DATE': 'disbDate',
-  'BRCH': 'branch',
-  'BRANCH': 'branch',
+/**
+ * Normalize an Excel header:
+ * - convert to string
+ * - trim leading/trailing spaces
+ * - replace line breaks, tabs, and repeated whitespace with a single space
+ * - preserve important symbols like "/" and "."
+ * - compare case-insensitively (stored uppercase)
+ */
+function normalizeHeader(raw: unknown): string {
+  return String(raw ?? '')
+    .trim()
+    .replace(/[\r\n\t]+/g, ' ')
+    .replace(/\s{2,}/g, ' ')
+    .toUpperCase();
+}
+
+/**
+ * Alias-based mapping from normalized Excel header → snake_case database column.
+ * Multiple source aliases can map to the same canonical column.
+ */
+const HEADER_ALIAS_MAP: Record<string, keyof VehicleRaw> = {
+  // Required columns
+  'CHASSIS NO.': 'chassis_no',
+  'CHASSIS NO': 'chassis_no',
+  'BG DATE': 'bg_date',
+  'SHIPMENT ETD PKG': 'shipment_etd_pkg',
+  'SHIPMENT ETA KK/TWU/SDK': 'shipment_eta_kk_twu_sdk',
+  'SHIPMENT ETA': 'shipment_eta_kk_twu_sdk',
+  'DATE RECEIVED BY OUTLET': 'date_received_by_outlet',
+  'DELIVERY DATE': 'delivery_date',
+  'DISB. DATE': 'disb_date',
+  'DISB DATE': 'disb_date',
+  'BRCH': 'branch_code',
+  'BRANCH': 'branch_code',
   'MODEL': 'model',
-  'PAYMENT METHOD': 'paymentMethod',
-  'SALESMAN': 'salesman',
-  'CUSTOMER NAME': 'customerName',
-  'REMARKS': 'remarks',
-  'VAA DATE': 'vaaDate',
-  'FULL PAYMENT DATE': 'fullPaymentDate',
-  'REG DATE': 'regDate',
+  'PAYMENT METHOD': 'payment_method',
+  'SA NAME': 'salesman_name',
+  'SALESMAN': 'salesman_name',
+  'SALESMAN NAME': 'salesman_name',
+  'CUST NAME': 'customer_name',
+  'CUSTOMER NAME': 'customer_name',
+  'REMARK': 'remark',
+  'REMARKS': 'remark',
+  'VAA DATE': 'vaa_date',
+  'FULL PAYMENT DATE': 'full_payment_date',
+  'REG DATE': 'reg_date',
+  // Optional columns
+  'NO.': 'source_row_no',
+  'VAR': 'variant',
+  'VARIANT': 'variant',
+  'DTP (DEALER TRANSFER PRICE)': 'dealer_transfer_price',
+  'FULL PAYMENT TYPE': 'full_payment_type',
+  'SHIPMENT NAME': 'shipment_name',
+  'LOU': 'lou',
+  'CONTRA SOLA': 'contra_sola',
+  'REG NO': 'reg_no',
+  'REG NO.': 'reg_no',
+  'INV NO.': 'invoice_no',
+  'INV NO': 'invoice_no',
+  'OBR': 'obr',
 };
 
-const REQUIRED_COLUMNS = ['chassisNo', 'bgDate', 'branch', 'model'];
+/** Required database columns for Auto Aging MVP */
+const REQUIRED_DB_COLUMNS: (keyof VehicleRaw)[] = [
+  'chassis_no',
+  'bg_date',
+  'shipment_etd_pkg',
+  'shipment_eta_kk_twu_sdk',
+  'date_received_by_outlet',
+  'delivery_date',
+  'disb_date',
+  'branch_code',
+  'model',
+  'payment_method',
+];
+
+const DATE_FIELDS = new Set<keyof VehicleRaw>([
+  'bg_date', 'shipment_etd_pkg', 'shipment_eta_kk_twu_sdk',
+  'date_received_by_outlet', 'delivery_date', 'disb_date',
+  'vaa_date', 'full_payment_date', 'reg_date',
+]);
 
 function parseExcelDate(val: unknown): string | undefined {
   if (!val) return undefined;
@@ -39,8 +96,6 @@ function parseExcelDate(val: unknown): string | undefined {
   return undefined;
 }
 
-const dateFields = new Set(['bgDate', 'shipmentEtdPkg', 'shipmentEtaKkTwuSdk', 'dateReceivedByOutlet', 'deliveryDate', 'disbDate', 'vaaDate', 'fullPaymentDate', 'regDate']);
-
 export function parseWorkbook(file: ArrayBuffer): { rows: VehicleRaw[]; issues: DataQualityIssue[]; missingColumns: string[] } {
   const wb = XLSX.read(file, { type: 'array', cellDates: false });
   const sheetName = wb.SheetNames.find(s => s.toLowerCase().includes('combine')) || wb.SheetNames[0];
@@ -49,44 +104,51 @@ export function parseWorkbook(file: ArrayBuffer): { rows: VehicleRaw[]; issues: 
 
   if (jsonData.length === 0) return { rows: [], issues: [], missingColumns: ['No data found'] };
 
-  const headers = Object.keys(jsonData[0]);
-  const columnMapping: Record<string, string> = {};
-  headers.forEach(h => {
-    const normalized = h.trim().toUpperCase();
-    if (COLUMN_MAP[normalized]) columnMapping[h] = COLUMN_MAP[normalized];
+  // Step 1: Read raw headers and normalize them
+  const rawHeaders = Object.keys(jsonData[0]);
+  const columnMapping: Record<string, keyof VehicleRaw> = {};
+
+  rawHeaders.forEach(rawHeader => {
+    const normalized = normalizeHeader(rawHeader);
+    if (HEADER_ALIAS_MAP[normalized]) {
+      columnMapping[rawHeader] = HEADER_ALIAS_MAP[normalized];
+    }
   });
 
-  const missingColumns = REQUIRED_COLUMNS.filter(rc => !Object.values(columnMapping).includes(rc));
+  // Step 2: Validate required canonical columns after mapping
+  const mappedDbColumns = new Set(Object.values(columnMapping));
+  const missingColumns = REQUIRED_DB_COLUMNS.filter(rc => !mappedDbColumns.has(rc));
 
   const rows: VehicleRaw[] = [];
   const issues: DataQualityIssue[] = [];
   const batchId = `import-${Date.now()}`;
 
+  // Step 3: Map each row
   jsonData.forEach((row, idx) => {
-    const vehicle: Partial<VehicleRaw> = { id: `raw-${idx}`, importBatchId: batchId, rowNumber: idx + 1 };
-    
-    Object.entries(columnMapping).forEach(([excelCol, fieldName]) => {
+    const vehicle: Partial<VehicleRaw> = { id: `raw-${idx}`, import_batch_id: batchId, row_number: idx + 1 };
+
+    Object.entries(columnMapping).forEach(([excelCol, dbColumn]) => {
       const val = row[excelCol];
-      if (dateFields.has(fieldName)) {
-        (vehicle as Record<string, unknown>)[fieldName] = parseExcelDate(val);
+      if (DATE_FIELDS.has(dbColumn)) {
+        (vehicle as Record<string, unknown>)[dbColumn] = parseExcelDate(val);
       } else {
-        (vehicle as Record<string, unknown>)[fieldName] = val ? String(val).trim() : undefined;
+        (vehicle as Record<string, unknown>)[dbColumn] = val ? String(val).trim() : undefined;
       }
     });
 
-    if (!vehicle.chassisNo) {
-      issues.push({ id: `iss-${idx}-chassis`, chassisNo: '', field: 'chassisNo', issueType: 'missing', message: `Row ${idx + 1}: Missing chassis number`, severity: 'error', importBatchId: batchId });
+    if (!vehicle.chassis_no) {
+      issues.push({ id: `iss-${idx}-chassis`, chassisNo: '', field: 'chassis_no', issueType: 'missing', message: `Row ${idx + 1}: Missing chassis number`, severity: 'error', importBatchId: batchId });
     }
 
-    vehicle.isD2D = vehicle.remarks?.toLowerCase().includes('d2d') || vehicle.remarks?.toLowerCase().includes('transfer') || false;
+    vehicle.is_d2d = vehicle.remark?.toLowerCase().includes('d2d') || vehicle.remark?.toLowerCase().includes('transfer') || false;
     rows.push(vehicle as VehicleRaw);
   });
 
-  // Detect duplicates
+  // Step 4: Detect duplicates
   const chassisCount = new Map<string, number>();
-  rows.forEach(r => { if (r.chassisNo) chassisCount.set(r.chassisNo, (chassisCount.get(r.chassisNo) || 0) + 1); });
+  rows.forEach(r => { if (r.chassis_no) chassisCount.set(r.chassis_no, (chassisCount.get(r.chassis_no) || 0) + 1); });
   chassisCount.forEach((count, chassis) => {
-    if (count > 1) issues.push({ id: `iss-dup-${chassis}`, chassisNo: chassis, field: 'chassisNo', issueType: 'duplicate', message: `Chassis ${chassis} appears ${count} times`, severity: 'warning', importBatchId: batchId });
+    if (count > 1) issues.push({ id: `iss-dup-${chassis}`, chassisNo: chassis, field: 'chassis_no', issueType: 'duplicate', message: `Chassis ${chassis} appears ${count} times`, severity: 'warning', importBatchId: batchId });
   });
 
   return { rows, issues, missingColumns };
@@ -94,17 +156,16 @@ export function parseWorkbook(file: ArrayBuffer): { rows: VehicleRaw[]; issues: 
 
 export function publishCanonical(rows: VehicleRaw[]): { canonical: VehicleCanonical[]; issues: DataQualityIssue[] } {
   const grouped = new Map<string, VehicleRaw[]>();
-  rows.filter(r => r.chassisNo).forEach(r => {
-    const arr = grouped.get(r.chassisNo) || [];
+  rows.filter(r => r.chassis_no).forEach(r => {
+    const arr = grouped.get(r.chassis_no) || [];
     arr.push(r);
-    grouped.set(r.chassisNo, arr);
+    grouped.set(r.chassis_no, arr);
   });
 
   const canonical: VehicleCanonical[] = [];
   const issues: DataQualityIssue[] = [];
 
   grouped.forEach((group, chassis) => {
-    // Pick the row with most filled fields
     const best = group.sort((a, b) => {
       const countFields = (v: VehicleRaw) => Object.values(v).filter(x => x !== undefined && x !== '').length;
       return countFields(b) - countFields(a);
@@ -117,45 +178,53 @@ export function publishCanonical(rows: VehicleRaw[]): { canonical: VehicleCanoni
 
     const v: VehicleCanonical = {
       id: `canon-${chassis}`,
-      chassisNo: chassis,
-      bgDate: best.bgDate,
-      shipmentEtdPkg: best.shipmentEtdPkg,
-      shipmentEtaKkTwuSdk: best.shipmentEtaKkTwuSdk,
-      dateReceivedByOutlet: best.dateReceivedByOutlet,
-      deliveryDate: best.deliveryDate,
-      disbDate: best.disbDate,
-      branch: best.branch || 'Unknown',
+      chassis_no: chassis,
+      bg_date: best.bg_date,
+      shipment_etd_pkg: best.shipment_etd_pkg,
+      shipment_eta_kk_twu_sdk: best.shipment_eta_kk_twu_sdk,
+      date_received_by_outlet: best.date_received_by_outlet,
+      delivery_date: best.delivery_date,
+      disb_date: best.disb_date,
+      branch_code: best.branch_code || 'Unknown',
       model: best.model || 'Unknown',
-      paymentMethod: best.paymentMethod || 'Unknown',
-      salesman: best.salesman || 'Unknown',
-      customerName: best.customerName || 'Unknown',
-      remarks: best.remarks,
-      vaaDate: best.vaaDate,
-      fullPaymentDate: best.fullPaymentDate,
-      regDate: best.regDate,
-      isD2D: best.isD2D || false,
-      importBatchId: best.importBatchId,
-      sourceRowId: best.id,
-      bgToDelivery: diffDays(best.bgDate, best.deliveryDate),
-      bgToShipmentEtd: diffDays(best.bgDate, best.shipmentEtdPkg),
-      etdToEta: diffDays(best.shipmentEtdPkg, best.shipmentEtaKkTwuSdk),
-      etaToOutletReceived: diffDays(best.shipmentEtaKkTwuSdk, best.dateReceivedByOutlet),
-      outletReceivedToDelivery: diffDays(best.dateReceivedByOutlet, best.deliveryDate),
-      bgToDisb: diffDays(best.bgDate, best.disbDate),
-      deliveryToDisb: diffDays(best.deliveryDate, best.disbDate),
+      payment_method: best.payment_method || 'Unknown',
+      salesman_name: best.salesman_name || 'Unknown',
+      customer_name: best.customer_name || 'Unknown',
+      remark: best.remark,
+      vaa_date: best.vaa_date,
+      full_payment_date: best.full_payment_date,
+      reg_date: best.reg_date,
+      is_d2d: best.is_d2d || false,
+      import_batch_id: best.import_batch_id,
+      source_row_id: best.id,
+      variant: best.variant,
+      dealer_transfer_price: best.dealer_transfer_price,
+      full_payment_type: best.full_payment_type,
+      shipment_name: best.shipment_name,
+      lou: best.lou,
+      contra_sola: best.contra_sola,
+      reg_no: best.reg_no,
+      invoice_no: best.invoice_no,
+      obr: best.obr,
+      bg_to_delivery: diffDays(best.bg_date, best.delivery_date),
+      bg_to_shipment_etd: diffDays(best.bg_date, best.shipment_etd_pkg),
+      etd_to_eta: diffDays(best.shipment_etd_pkg, best.shipment_eta_kk_twu_sdk),
+      eta_to_outlet_received: diffDays(best.shipment_eta_kk_twu_sdk, best.date_received_by_outlet),
+      outlet_received_to_delivery: diffDays(best.date_received_by_outlet, best.delivery_date),
+      bg_to_disb: diffDays(best.bg_date, best.disb_date),
+      delivery_to_disb: diffDays(best.delivery_date, best.disb_date),
     };
 
-    // Log negative KPIs as issues
     const kpiFields = [
-      ['bgToDelivery', 'BG→Delivery'], ['bgToShipmentEtd', 'BG→ETD'], ['etdToEta', 'ETD→ETA'],
-      ['etaToOutletReceived', 'ETA→Outlet'], ['outletReceivedToDelivery', 'Outlet→Delivery'],
-      ['bgToDisb', 'BG→Disb'], ['deliveryToDisb', 'Delivery→Disb'],
+      ['bg_to_delivery', 'BG→Delivery'], ['bg_to_shipment_etd', 'BG→ETD'], ['etd_to_eta', 'ETD→ETA'],
+      ['eta_to_outlet_received', 'ETA→Outlet'], ['outlet_received_to_delivery', 'Outlet→Delivery'],
+      ['bg_to_disb', 'BG→Disb'], ['delivery_to_disb', 'Delivery→Disb'],
     ] as const;
 
     kpiFields.forEach(([field, label]) => {
       const val = v[field];
       if (val !== null && val !== undefined && val < 0) {
-        issues.push({ id: `neg-${chassis}-${field}`, chassisNo: chassis, field, issueType: 'negative', message: `${label} is negative (${val} days)`, severity: 'error', importBatchId: best.importBatchId });
+        issues.push({ id: `neg-${chassis}-${field}`, chassisNo: chassis, field, issueType: 'negative', message: `${label} is negative (${val} days)`, severity: 'error', importBatchId: best.import_batch_id });
       }
     });
 

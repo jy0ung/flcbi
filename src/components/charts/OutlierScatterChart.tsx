@@ -10,16 +10,15 @@ interface Props {
 export function OutlierScatterChart({ vehicles, onVehicleClick }: Props) {
   const scatterData = useMemo(() => {
     return vehicles
-      .filter(v => v.bgToDelivery != null && v.bgToDelivery >= 0 && v.etdToEta != null && v.etdToEta >= 0)
+      .filter(v => v.bg_to_delivery != null && v.bg_to_delivery >= 0 && v.etd_to_eta != null && v.etd_to_eta >= 0)
       .map(v => ({
-        chassisNo: v.chassisNo,
-        branch: v.branch,
-        bgToDelivery: v.bgToDelivery!,
-        etdToEta: v.etdToEta!,
+        chassisNo: v.chassis_no,
+        branch: v.branch_code,
+        bgToDelivery: v.bg_to_delivery!,
+        etdToEta: v.etd_to_eta!,
       }));
   }, [vehicles]);
 
-  // Calculate thresholds for outlier coloring (P90)
   const { p90BgDel, p90EtdEta } = useMemo(() => {
     const bgDels = scatterData.map(d => d.bgToDelivery).sort((a, b) => a - b);
     const etdEtas = scatterData.map(d => d.etdToEta).sort((a, b) => a - b);

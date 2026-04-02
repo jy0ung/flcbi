@@ -35,34 +35,33 @@ function generateVehicles(count: number): VehicleCanonical[] {
 
     const diffDays = (a?: string, b?: string) => {
       if (!a || !b) return null;
-      const diff = Math.round((new Date(b).getTime() - new Date(a).getTime()) / 86400000);
-      return diff;
+      return Math.round((new Date(b).getTime() - new Date(a).getTime()) / 86400000);
     };
 
     vehicles.push({
       id: `v-${i + 1}`,
-      chassisNo: `PMK${String(rand(100000, 999999))}${String.fromCharCode(65 + rand(0, 25))}`,
-      bgDate: bg,
-      shipmentEtdPkg: etd,
-      shipmentEtaKkTwuSdk: eta,
-      dateReceivedByOutlet: outlet,
-      deliveryDate: delivery,
-      disbDate: disb,
-      branch: pick(branches),
+      chassis_no: `PMK${String(rand(100000, 999999))}${String.fromCharCode(65 + rand(0, 25))}`,
+      bg_date: bg,
+      shipment_etd_pkg: etd,
+      shipment_eta_kk_twu_sdk: eta,
+      date_received_by_outlet: outlet,
+      delivery_date: delivery,
+      disb_date: disb,
+      branch_code: pick(branches),
       model: pick(models),
-      paymentMethod: pick(payments),
-      salesman: pick(salesmen),
-      customerName: `Customer ${i + 1}`,
-      isD2D,
-      importBatchId: 'batch-1',
-      sourceRowId: `raw-${i + 1}`,
-      bgToDelivery: diffDays(bg, delivery),
-      bgToShipmentEtd: diffDays(bg, etd),
-      etdToEta: diffDays(etd, eta),
-      etaToOutletReceived: diffDays(eta, outlet),
-      outletReceivedToDelivery: diffDays(outlet, delivery),
-      bgToDisb: diffDays(bg, disb),
-      deliveryToDisb: diffDays(delivery, disb),
+      payment_method: pick(payments),
+      salesman_name: pick(salesmen),
+      customer_name: `Customer ${i + 1}`,
+      is_d2d: isD2D,
+      import_batch_id: 'batch-1',
+      source_row_id: `raw-${i + 1}`,
+      bg_to_delivery: diffDays(bg, delivery),
+      bg_to_shipment_etd: diffDays(bg, etd),
+      etd_to_eta: diffDays(etd, eta),
+      eta_to_outlet_received: diffDays(eta, outlet),
+      outlet_received_to_delivery: diffDays(outlet, delivery),
+      bg_to_disb: diffDays(bg, disb),
+      delivery_to_disb: diffDays(delivery, disb),
     });
   }
   return vehicles;
@@ -84,9 +83,9 @@ export const demoImportBatches: ImportBatch[] = [
 ];
 
 export const demoQualityIssues: DataQualityIssue[] = [
-  { id: 'dq1', chassisNo: demoVehicles[0]?.chassisNo ?? '', field: 'shipmentEtdPkg', issueType: 'missing', message: 'Shipment ETD date is missing', severity: 'warning', importBatchId: 'batch-1' },
-  { id: 'dq2', chassisNo: demoVehicles[1]?.chassisNo ?? '', field: 'deliveryToDisb', issueType: 'negative', message: 'Disbursement before delivery (-3 days)', severity: 'error', importBatchId: 'batch-1' },
-  { id: 'dq3', chassisNo: demoVehicles[2]?.chassisNo ?? '', field: 'deliveryDate', issueType: 'missing', message: 'Delivery date is missing', severity: 'warning', importBatchId: 'batch-1' },
+  { id: 'dq1', chassisNo: demoVehicles[0]?.chassis_no ?? '', field: 'shipment_etd_pkg', issueType: 'missing', message: 'Shipment ETD date is missing', severity: 'warning', importBatchId: 'batch-1' },
+  { id: 'dq2', chassisNo: demoVehicles[1]?.chassis_no ?? '', field: 'delivery_to_disb', issueType: 'negative', message: 'Disbursement before delivery (-3 days)', severity: 'error', importBatchId: 'batch-1' },
+  { id: 'dq3', chassisNo: demoVehicles[2]?.chassis_no ?? '', field: 'delivery_date', issueType: 'missing', message: 'Delivery date is missing', severity: 'warning', importBatchId: 'batch-1' },
 ];
 
 export const demoSLAs: SlaPolicy[] = KPI_DEFINITIONS.map(k => ({
@@ -115,7 +114,6 @@ export const platformModules: PlatformModule[] = [
   { id: 'forecasting', name: 'Forecasting & AI Insights', description: 'Predictive analytics and AI recommendations', icon: 'Brain', status: 'planned' },
 ];
 
-// Compute KPI summaries
 export function computeKpiSummaries(vehicles: VehicleCanonical[], slas: SlaPolicy[]): import('@/types').KpiSummary[] {
   return KPI_DEFINITIONS.map(kpi => {
     const sla = slas.find(s => s.kpiId === kpi.id);

@@ -43,56 +43,77 @@ export interface ImportBatch {
 // ===== Vehicle =====
 export interface VehicleRaw {
   id: string;
-  importBatchId: string;
-  rowNumber: number;
-  chassisNo: string;
-  bgDate?: string;
-  shipmentEtdPkg?: string;
-  shipmentEtaKkTwuSdk?: string;
-  dateReceivedByOutlet?: string;
-  deliveryDate?: string;
-  disbDate?: string;
-  branch?: string;
+  import_batch_id: string;
+  row_number: number;
+  chassis_no: string;
+  bg_date?: string;
+  shipment_etd_pkg?: string;
+  shipment_eta_kk_twu_sdk?: string;
+  date_received_by_outlet?: string;
+  delivery_date?: string;
+  disb_date?: string;
+  branch_code?: string;
   model?: string;
-  paymentMethod?: string;
-  salesman?: string;
-  customerName?: string;
-  remarks?: string;
-  vaaDate?: string;
-  fullPaymentDate?: string;
-  regDate?: string;
-  isD2D?: boolean;
+  payment_method?: string;
+  salesman_name?: string;
+  customer_name?: string;
+  remark?: string;
+  vaa_date?: string;
+  full_payment_date?: string;
+  reg_date?: string;
+  is_d2d?: boolean;
+  // Optional fields
+  source_row_no?: string;
+  variant?: string;
+  dealer_transfer_price?: string;
+  full_payment_type?: string;
+  shipment_name?: string;
+  lou?: string;
+  contra_sola?: string;
+  reg_no?: string;
+  invoice_no?: string;
+  obr?: string;
 }
 
 export interface VehicleCanonical {
   id: string;
-  chassisNo: string;
-  bgDate?: string;
-  shipmentEtdPkg?: string;
-  shipmentEtaKkTwuSdk?: string;
-  dateReceivedByOutlet?: string;
-  deliveryDate?: string;
-  disbDate?: string;
-  branch: string;
+  chassis_no: string;
+  bg_date?: string;
+  shipment_etd_pkg?: string;
+  shipment_eta_kk_twu_sdk?: string;
+  date_received_by_outlet?: string;
+  delivery_date?: string;
+  disb_date?: string;
+  branch_code: string;
   model: string;
-  paymentMethod: string;
-  salesman: string;
-  customerName: string;
-  remarks?: string;
-  vaaDate?: string;
-  fullPaymentDate?: string;
-  regDate?: string;
-  isD2D: boolean;
-  importBatchId: string;
-  sourceRowId: string;
+  payment_method: string;
+  salesman_name: string;
+  customer_name: string;
+  remark?: string;
+  vaa_date?: string;
+  full_payment_date?: string;
+  reg_date?: string;
+  is_d2d: boolean;
+  import_batch_id: string;
+  source_row_id: string;
+  // Optional fields
+  variant?: string;
+  dealer_transfer_price?: string;
+  full_payment_type?: string;
+  shipment_name?: string;
+  lou?: string;
+  contra_sola?: string;
+  reg_no?: string;
+  invoice_no?: string;
+  obr?: string;
   // Computed KPIs
-  bgToDelivery?: number | null;
-  bgToShipmentEtd?: number | null;
-  etdToEta?: number | null;
-  etaToOutletReceived?: number | null;
-  outletReceivedToDelivery?: number | null;
-  bgToDisb?: number | null;
-  deliveryToDisb?: number | null;
+  bg_to_delivery?: number | null;
+  bg_to_shipment_etd?: number | null;
+  etd_to_eta?: number | null;
+  eta_to_outlet_received?: number | null;
+  outlet_received_to_delivery?: number | null;
+  bg_to_disb?: number | null;
+  delivery_to_disb?: number | null;
 }
 
 // ===== KPI =====

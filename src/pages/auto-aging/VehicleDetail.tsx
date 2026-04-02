@@ -12,7 +12,7 @@ export default function VehicleDetail() {
   const { vehicles, qualityIssues } = useData();
   const navigate = useNavigate();
 
-  const vehicle = vehicles.find(v => v.chassisNo === chassisNo);
+  const vehicle = vehicles.find(v => v.chassis_no === chassisNo);
   if (!vehicle) {
     return (
       <div className="space-y-4 animate-fade-in">
@@ -25,12 +25,12 @@ export default function VehicleDetail() {
   const issues = qualityIssues.filter(q => q.chassisNo === chassisNo);
 
   const milestones = [
-    { label: 'BG Date', date: vehicle.bgDate },
-    { label: 'Shipment ETD', date: vehicle.shipmentEtdPkg },
-    { label: 'Shipment ETA', date: vehicle.shipmentEtaKkTwuSdk },
-    { label: 'Outlet Received', date: vehicle.dateReceivedByOutlet },
-    { label: 'Delivery', date: vehicle.deliveryDate },
-    { label: 'Disbursement', date: vehicle.disbDate },
+    { label: 'BG Date', date: vehicle.bg_date },
+    { label: 'Shipment ETD', date: vehicle.shipment_etd_pkg },
+    { label: 'Shipment ETA', date: vehicle.shipment_eta_kk_twu_sdk },
+    { label: 'Outlet Received', date: vehicle.date_received_by_outlet },
+    { label: 'Delivery', date: vehicle.delivery_date },
+    { label: 'Disbursement', date: vehicle.disb_date },
   ];
 
   const kpiValues = KPI_DEFINITIONS.map(k => ({
@@ -42,9 +42,9 @@ export default function VehicleDetail() {
   return (
     <div className="space-y-6 animate-fade-in">
       <PageHeader
-        title={vehicle.chassisNo}
-        description={`${vehicle.model} • ${vehicle.branch} • ${vehicle.customerName}`}
-        breadcrumbs={[{ label: 'FLC BI' }, { label: 'Auto Aging' }, { label: 'Vehicles' }, { label: vehicle.chassisNo }]}
+        title={vehicle.chassis_no}
+        description={`${vehicle.model} • ${vehicle.branch_code} • ${vehicle.customer_name}`}
+        breadcrumbs={[{ label: 'FLC BI' }, { label: 'Auto Aging' }, { label: 'Vehicles' }, { label: vehicle.chassis_no }]}
         actions={<Button variant="outline" size="sm" onClick={() => navigate(-1)}><ArrowLeft className="h-3.5 w-3.5 mr-1" />Back</Button>}
       />
 
@@ -54,14 +54,14 @@ export default function VehicleDetail() {
           <h3 className="text-sm font-semibold text-foreground mb-4">Vehicle Information</h3>
           <div className="grid grid-cols-2 gap-3 text-sm">
             {[
-              ['Chassis No.', vehicle.chassisNo],
+              ['Chassis No.', vehicle.chassis_no],
               ['Model', vehicle.model],
-              ['Branch', vehicle.branch],
-              ['Payment', vehicle.paymentMethod],
-              ['Salesman', vehicle.salesman],
-              ['Customer', vehicle.customerName],
-              ['D2D/Transfer', vehicle.isD2D ? 'Yes' : 'No'],
-              ['Remarks', vehicle.remarks || '—'],
+              ['Branch', vehicle.branch_code],
+              ['Payment', vehicle.payment_method],
+              ['Salesman', vehicle.salesman_name],
+              ['Customer', vehicle.customer_name],
+              ['D2D/Transfer', vehicle.is_d2d ? 'Yes' : 'No'],
+              ['Remarks', vehicle.remark || '—'],
             ].map(([label, value]) => (
               <div key={label as string}>
                 <p className="text-xs text-muted-foreground">{label}</p>

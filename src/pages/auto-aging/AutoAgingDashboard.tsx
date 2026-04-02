@@ -6,7 +6,7 @@ import { StatusBadge } from '@/components/shared/StatusBadge';
 import { useData } from '@/contexts/DataContext';
 import { Button } from '@/components/ui/button';
 import { RefreshCw, Download, Filter } from 'lucide-react';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { AgingTrendChart } from '@/components/charts/AgingTrendChart';
 import { OutlierScatterChart } from '@/components/charts/OutlierScatterChart';
 import { PaymentPieChart } from '@/components/charts/PaymentPieChart';
@@ -17,16 +17,15 @@ export default function AutoAgingDashboard() {
   const [branchFilter, setBranchFilter] = useState<string>('all');
   const [modelFilter, setModelFilter] = useState<string>('all');
 
-  const branches = [...new Set(vehicles.map(v => v.branch))].sort();
+  const branches = [...new Set(vehicles.map(v => v.branch_code))].sort();
   const models = [...new Set(vehicles.map(v => v.model))].sort();
 
   const filtered = vehicles.filter(v => {
-    if (branchFilter !== 'all' && v.branch !== branchFilter) return false;
+    if (branchFilter !== 'all' && v.branch_code !== branchFilter) return false;
     if (modelFilter !== 'all' && v.model !== modelFilter) return false;
     return true;
   });
 
-  // Process flow data
   const processStages = [
     { label: 'BG Date', short: 'BG' },
     { label: 'Shipment ETD', short: 'ETD' },
@@ -39,11 +38,11 @@ export default function AutoAgingDashboard() {
   const branchHeatmap = React.useMemo(() => {
     const groups = new Map<string, { bgToDelivery: number[]; etdToEta: number[]; outletToDelivery: number[] }>();
     filtered.forEach(v => {
-      const g = groups.get(v.branch) || { bgToDelivery: [], etdToEta: [], outletToDelivery: [] };
-      if (v.bgToDelivery != null && v.bgToDelivery >= 0) g.bgToDelivery.push(v.bgToDelivery);
-      if (v.etdToEta != null && v.etdToEta >= 0) g.etdToEta.push(v.etdToEta);
-      if (v.outletReceivedToDelivery != null && v.outletReceivedToDelivery >= 0) g.outletToDelivery.push(v.outletReceivedToDelivery);
-      groups.set(v.branch, g);
+      const g = groups.get(v.branch_code) || { bgToDelivery: [], etdToEta: [], outletToDelivery: [] };
+      if (v.bg_to_delivery != null && v.bg_to_delivery >= 0) g.bgToDelivery.push(v.bg_to_delivery);
+      if (v.etd_to_eta != null && v.etd_to_eta >= 0) g.etdToEta.push(v.etd_to_eta);
+      if (v.outlet_received_to_delivery != null && v.outlet_received_to_delivery >= 0) g.outletToDelivery.push(v.outlet_received_to_delivery);
+      groups.set(v.branch_code, g);
     });
 
     return Array.from(groups.entries()).map(([branch, g]) => ({
@@ -193,17 +192,17 @@ export default function AutoAgingDashboard() {
             </thead>
             <tbody>
               {filtered
-                .filter(v => v.bgToDelivery != null && v.bgToDelivery >= 0)
-                .sort((a, b) => (b.bgToDelivery ?? 0) - (a.bgToDelivery ?? 0))
+                .filter(v => v.bg_to_delivery != null && v.bg_to_delivery >= 0)
+                .sort((a, b) => (b.bg_to_delivery ?? 0) - (a.bg_to_delivery ?? 0))
                 .slice(0, 10)
                 .map(v => (
-                  <tr key={v.id} className="data-table-row cursor-pointer" onClick={() => navigate(`/auto-aging/vehicles/${v.chassisNo}`)}>
-                    <td className="px-3 py-2 font-mono text-xs text-foreground">{v.chassisNo}</td>
-                    <td className="px-3 py-2 text-foreground">{v.branch}</td>
+                  <tr key={v.id} className="data-table-row cursor-pointer" onClick={() => navigate(`/auto-aging/vehicles/${v.chassis_no}`)}>
+                    <td className="px-3 py-2 font-mono text-xs text-foreground">{v.chassis_no}</td>
+                    <td className="px-3 py-2 text-foreground">{v.branch_code}</td>
                     <td className="px-3 py-2 text-foreground">{v.model}</td>
-                    <td className="px-3 py-2"><span className={(v.bgToDelivery ?? 0) > 45 ? 'text-destructive font-semibold' : 'text-foreground'}>{v.bgToDelivery}d</span></td>
-                    <td className="px-3 py-2 text-foreground">{v.etdToEta != null ? `${v.etdToEta}d` : '—'}</td>
-                    <td className="px-3 py-2"><StatusBadge status={(v.bgToDelivery ?? 0) > 45 ? 'warning' : 'active'} /></td>
+                    <td className="px-3 py-2"><span className={(v.bg_to_delivery ?? 0) > 45 ? 'text-destructive font-semibold' : 'text-foreground'}>{v.bg_to_delivery}d</span></td>
+                    <td className="px-3 py-2 text-foreground">{v.etd_to_eta != null ? `${v.etd_to_eta}d` : '—'}</td>
+                    <td className="px-3 py-2"><StatusBadge status={(v.bg_to_delivery ?? 0) > 45 ? 'warning' : 'active'} /></td>
                   </tr>
                 ))}
             </tbody>

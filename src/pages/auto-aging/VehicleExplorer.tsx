@@ -4,7 +4,7 @@ import { PageHeader } from '@/components/shared/PageHeader';
 import { StatusBadge } from '@/components/shared/StatusBadge';
 import { useData } from '@/contexts/DataContext';
 import { Button } from '@/components/ui/button';
-import { Download, Filter, Search } from 'lucide-react';
+import { Download, Search } from 'lucide-react';
 
 export default function VehicleExplorer() {
   const { vehicles } = useData();
@@ -13,18 +13,18 @@ export default function VehicleExplorer() {
   const [branchFilter, setBranchFilter] = useState('all');
   const [modelFilter, setModelFilter] = useState('all');
   const [paymentFilter, setPaymentFilter] = useState('all');
-  const [sortField, setSortField] = useState<string>('bgToDelivery');
+  const [sortField, setSortField] = useState<string>('bg_to_delivery');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
 
-  const branches = [...new Set(vehicles.map(v => v.branch))].sort();
+  const branches = [...new Set(vehicles.map(v => v.branch_code))].sort();
   const models = [...new Set(vehicles.map(v => v.model))].sort();
-  const payments = [...new Set(vehicles.map(v => v.paymentMethod))].sort();
+  const payments = [...new Set(vehicles.map(v => v.payment_method))].sort();
 
   const filtered = vehicles.filter(v => {
-    if (search && !v.chassisNo.toLowerCase().includes(search.toLowerCase()) && !v.customerName.toLowerCase().includes(search.toLowerCase())) return false;
-    if (branchFilter !== 'all' && v.branch !== branchFilter) return false;
+    if (search && !v.chassis_no.toLowerCase().includes(search.toLowerCase()) && !v.customer_name.toLowerCase().includes(search.toLowerCase())) return false;
+    if (branchFilter !== 'all' && v.branch_code !== branchFilter) return false;
     if (modelFilter !== 'all' && v.model !== modelFilter) return false;
-    if (paymentFilter !== 'all' && v.paymentMethod !== paymentFilter) return false;
+    if (paymentFilter !== 'all' && v.payment_method !== paymentFilter) return false;
     return true;
   }).sort((a, b) => {
     const aVal = (a as unknown as Record<string, unknown>)[sortField] as number ?? 0;
@@ -82,24 +82,24 @@ export default function VehicleExplorer() {
                 <th className="px-3 py-2 text-xs text-muted-foreground font-medium">Branch</th>
                 <th className="px-3 py-2 text-xs text-muted-foreground font-medium">Model</th>
                 <th className="px-3 py-2 text-xs text-muted-foreground font-medium">Customer</th>
-                <SortHeader field="bgToDelivery" label="BG→Del" />
-                <SortHeader field="bgToShipmentEtd" label="BG→ETD" />
-                <SortHeader field="etdToEta" label="ETD→ETA" />
-                <SortHeader field="etaToOutletReceived" label="ETA→Out" />
-                <SortHeader field="outletReceivedToDelivery" label="Out→Del" />
-                <SortHeader field="bgToDisb" label="BG→Disb" />
-                <SortHeader field="deliveryToDisb" label="Del→Disb" />
+                <SortHeader field="bg_to_delivery" label="BG→Del" />
+                <SortHeader field="bg_to_shipment_etd" label="BG→ETD" />
+                <SortHeader field="etd_to_eta" label="ETD→ETA" />
+                <SortHeader field="eta_to_outlet_received" label="ETA→Out" />
+                <SortHeader field="outlet_received_to_delivery" label="Out→Del" />
+                <SortHeader field="bg_to_disb" label="BG→Disb" />
+                <SortHeader field="delivery_to_disb" label="Del→Disb" />
                 <th className="px-3 py-2 text-xs text-muted-foreground font-medium">D2D</th>
               </tr>
             </thead>
             <tbody>
               {filtered.slice(0, 100).map(v => (
-                <tr key={v.id} className="data-table-row cursor-pointer" onClick={() => navigate(`/auto-aging/vehicles/${v.chassisNo}`)}>
-                  <td className="px-3 py-2 font-mono text-xs text-primary">{v.chassisNo}</td>
-                  <td className="px-3 py-2 text-foreground">{v.branch}</td>
+                <tr key={v.id} className="data-table-row cursor-pointer" onClick={() => navigate(`/auto-aging/vehicles/${v.chassis_no}`)}>
+                  <td className="px-3 py-2 font-mono text-xs text-primary">{v.chassis_no}</td>
+                  <td className="px-3 py-2 text-foreground">{v.branch_code}</td>
                   <td className="px-3 py-2 text-foreground">{v.model}</td>
-                  <td className="px-3 py-2 text-foreground truncate max-w-[120px]">{v.customerName}</td>
-                  {(['bgToDelivery', 'bgToShipmentEtd', 'etdToEta', 'etaToOutletReceived', 'outletReceivedToDelivery', 'bgToDisb', 'deliveryToDisb'] as const).map(f => {
+                  <td className="px-3 py-2 text-foreground truncate max-w-[120px]">{v.customer_name}</td>
+                  {(['bg_to_delivery', 'bg_to_shipment_etd', 'etd_to_eta', 'eta_to_outlet_received', 'outlet_received_to_delivery', 'bg_to_disb', 'delivery_to_disb'] as const).map(f => {
                     const val = v[f];
                     return (
                       <td key={f} className="px-3 py-2 tabular-nums">
@@ -107,7 +107,7 @@ export default function VehicleExplorer() {
                       </td>
                     );
                   })}
-                  <td className="px-3 py-2">{v.isD2D ? <StatusBadge status="warning" className="text-[10px]" /> : ''}</td>
+                  <td className="px-3 py-2">{v.is_d2d ? <StatusBadge status="warning" className="text-[10px]" /> : ''}</td>
                 </tr>
               ))}
             </tbody>

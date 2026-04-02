@@ -49,7 +49,7 @@ export default function ImportCenter() {
 
     setTimeout(() => {
       const { canonical, issues } = publishCanonical(rawRows);
-      setVehicles([...canonical, ...vehicles.filter(v => !canonical.find(c => c.chassisNo === v.chassisNo))]);
+      setVehicles([...canonical, ...vehicles.filter(v => !canonical.find(c => c.chassis_no === v.chassis_no))]);
       addQualityIssues(issues);
       updateImportBatch(batchId, { status: 'published', publishedAt: new Date().toISOString() });
       refreshKpis();

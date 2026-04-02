@@ -11,12 +11,12 @@ export function AgingTrendChart({ vehicles }: Props) {
     const monthMap = new Map<string, { bgToDel: number[]; etdToEta: number[]; outletToDel: number[] }>();
 
     vehicles.forEach(v => {
-      if (!v.bgDate) return;
-      const month = v.bgDate.slice(0, 7); // YYYY-MM
+      if (!v.bg_date) return;
+      const month = v.bg_date.slice(0, 7);
       const entry = monthMap.get(month) || { bgToDel: [], etdToEta: [], outletToDel: [] };
-      if (v.bgToDelivery != null && v.bgToDelivery >= 0) entry.bgToDel.push(v.bgToDelivery);
-      if (v.etdToEta != null && v.etdToEta >= 0) entry.etdToEta.push(v.etdToEta);
-      if (v.outletReceivedToDelivery != null && v.outletReceivedToDelivery >= 0) entry.outletToDel.push(v.outletReceivedToDelivery);
+      if (v.bg_to_delivery != null && v.bg_to_delivery >= 0) entry.bgToDel.push(v.bg_to_delivery);
+      if (v.etd_to_eta != null && v.etd_to_eta >= 0) entry.etdToEta.push(v.etd_to_eta);
+      if (v.outlet_received_to_delivery != null && v.outlet_received_to_delivery >= 0) entry.outletToDel.push(v.outlet_received_to_delivery);
       monthMap.set(month, entry);
     });
 

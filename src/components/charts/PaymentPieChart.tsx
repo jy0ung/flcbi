@@ -19,10 +19,10 @@ export function PaymentPieChart({ vehicles }: Props) {
   const { pieData, avgByMethod } = useMemo(() => {
     const counts = new Map<string, { count: number; totalDays: number }>();
     vehicles.forEach(v => {
-      const entry = counts.get(v.paymentMethod) || { count: 0, totalDays: 0 };
+      const entry = counts.get(v.payment_method) || { count: 0, totalDays: 0 };
       entry.count++;
-      if (v.bgToDelivery != null && v.bgToDelivery >= 0) entry.totalDays += v.bgToDelivery;
-      counts.set(v.paymentMethod, entry);
+      if (v.bg_to_delivery != null && v.bg_to_delivery >= 0) entry.totalDays += v.bg_to_delivery;
+      counts.set(v.payment_method, entry);
     });
 
     const pieData = Array.from(counts.entries()).map(([name, d]) => ({
