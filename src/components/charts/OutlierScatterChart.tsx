@@ -10,34 +10,34 @@ interface Props {
 export function OutlierScatterChart({ vehicles, onVehicleClick }: Props) {
   const scatterData = useMemo(() => {
     return vehicles
-      .filter(v => v.bg_to_delivery != null && v.bg_to_delivery >= 0 && v.etd_to_eta != null && v.etd_to_eta >= 0)
+      .filter(v => v.bg_to_delivery != null && v.bg_to_delivery >= 0 && v.etd_to_outlet != null && v.etd_to_outlet >= 0)
       .map(v => ({
         chassisNo: v.chassis_no,
         branch: v.branch_code,
         bgToDelivery: v.bg_to_delivery!,
-        etdToEta: v.etd_to_eta!,
+        etdToOutlet: v.etd_to_outlet!,
       }));
   }, [vehicles]);
 
-  const { p90BgDel, p90EtdEta } = useMemo(() => {
+  const { p90BgDel, p90EtdOut } = useMemo(() => {
     const bgDels = scatterData.map(d => d.bgToDelivery).sort((a, b) => a - b);
-    const etdEtas = scatterData.map(d => d.etdToEta).sort((a, b) => a - b);
+    const etdOuts = scatterData.map(d => d.etdToOutlet).sort((a, b) => a - b);
     return {
       p90BgDel: bgDels[Math.floor(bgDels.length * 0.9)] ?? 60,
-      p90EtdEta: etdEtas[Math.floor(etdEtas.length * 0.9)] ?? 25,
+      p90EtdOut: etdOuts[Math.floor(etdOuts.length * 0.9)] ?? 25,
     };
   }, [scatterData]);
 
-  const getColor = (d: { bgToDelivery: number; etdToEta: number }) => {
-    if (d.bgToDelivery > p90BgDel || d.etdToEta > p90EtdEta) return 'hsl(0, 72%, 51%)';
-    if (d.bgToDelivery > p90BgDel * 0.75 || d.etdToEta > p90EtdEta * 0.75) return 'hsl(var(--primary))';
+  const getColor = (d: { bgToDelivery: number; etdToOutlet: number }) => {
+    if (d.bgToDelivery > p90BgDel || d.etdToOutlet > p90EtdOut) return 'hsl(0, 72%, 51%)';
+    if (d.bgToDelivery > p90BgDel * 0.75 || d.etdToOutlet > p90EtdOut * 0.75) return 'hsl(var(--primary))';
     return 'hsl(199, 89%, 48%)';
   };
 
   return (
     <div className="glass-panel p-5">
       <div className="flex items-center justify-between mb-4">
-        <h3 className="text-sm font-semibold text-foreground">Outlier Detection — BG→Delivery vs ETD→ETA</h3>
+        <h3 className="text-sm font-semibold text-foreground">Outlier Detection — BG→Delivery vs ETD→Outlet</h3>
         <div className="flex items-center gap-3 text-[10px]">
           <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-[hsl(199,89%,48%)]" />Normal</span>
           <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-primary" />At Risk</span>
@@ -56,12 +56,12 @@ export function OutlierScatterChart({ vehicles, onVehicleClick }: Props) {
             label={{ value: 'BG → Delivery (days)', position: 'insideBottom', offset: -2, fontSize: 10, fill: 'hsl(var(--muted-foreground))' }}
           />
           <YAxis
-            dataKey="etdToEta"
-            name="ETD→ETA"
+            dataKey="etdToOutlet"
+            name="ETD→Outlet"
             unit="d"
             tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }}
             axisLine={false}
-            label={{ value: 'ETD → ETA (days)', angle: -90, position: 'insideLeft', fontSize: 10, fill: 'hsl(var(--muted-foreground))' }}
+            label={{ value: 'ETD → Outlet (days)', angle: -90, position: 'insideLeft', fontSize: 10, fill: 'hsl(var(--muted-foreground))' }}
           />
           <ZAxis range={[30, 30]} />
           <Tooltip
