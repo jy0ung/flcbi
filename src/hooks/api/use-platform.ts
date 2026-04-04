@@ -167,10 +167,49 @@ export function useAdminUsers(enabled = true) {
   });
 }
 
+export function useAdminBranches(enabled = true) {
+  return useQuery({
+    queryKey: ["admin", "branches"],
+    queryFn: () => apiClient.getAdminBranches(),
+    enabled,
+  });
+}
+
 export function useAdminRoles(enabled = true) {
   return useQuery({
     queryKey: ["admin", "roles"],
     queryFn: () => apiClient.getAdminRoles(),
     enabled,
+  });
+}
+
+export function useCreateAdminUser() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: apiClient.createAdminUser,
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["admin", "users"] });
+    },
+  });
+}
+
+export function useUpdateAdminUser() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, input }: { id: string; input: Parameters<typeof apiClient.updateAdminUser>[1] }) =>
+      apiClient.updateAdminUser(id, input),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["admin", "users"] });
+    },
+  });
+}
+
+export function useDeleteAdminUser() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => apiClient.deleteAdminUser(id),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["admin", "users"] });
+    },
   });
 }

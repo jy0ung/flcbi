@@ -1,6 +1,8 @@
 import type {
+  AppRole,
   AgingSummary,
   AlertRule,
+  Branch,
   AuditEvent,
   AuthSession,
   DashboardPreferences,
@@ -12,6 +14,7 @@ import type {
   NavigationItem,
   Notification,
   SlaPolicy,
+  UserStatus,
   User,
   VehicleCanonical,
   DataQualityIssue,
@@ -102,6 +105,32 @@ export interface AdminUsersResponse {
 
 export interface AdminRolesResponse {
   items: { role: string; description: string }[];
+}
+
+export interface AdminBranchesResponse {
+  items: Branch[];
+}
+
+export interface AdminUserResponse {
+  item: User;
+}
+
+export interface CreateAdminUserRequest {
+  email: string;
+  name: string;
+  role: AppRole;
+  branchId?: string | null;
+  password: string;
+  status?: UserStatus;
+}
+
+export interface UpdateAdminUserRequest {
+  email?: string;
+  name?: string;
+  role?: AppRole;
+  branchId?: string | null;
+  password?: string;
+  status?: UserStatus;
 }
 
 export interface FilterOptionsResponse {

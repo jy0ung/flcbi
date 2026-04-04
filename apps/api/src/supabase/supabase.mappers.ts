@@ -21,6 +21,7 @@ export interface SupabaseProfileRow {
   app_role: string;
   company_id: string | null;
   primary_branch_id: string | null;
+  status: User["status"];
 }
 
 export function toAppRole(value: string): AppRole {
@@ -35,5 +36,6 @@ export function toContractUser(row: SupabaseProfileRow): User {
     role: toAppRole(row.app_role),
     companyId: row.company_id ?? "",
     branchId: row.primary_branch_id ?? undefined,
+    status: row.status ?? "pending",
   };
 }

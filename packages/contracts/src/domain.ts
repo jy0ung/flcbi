@@ -16,7 +16,10 @@ export interface User {
   companyId: string;
   branchId?: string;
   avatar?: string;
+  status?: UserStatus;
 }
+
+export type UserStatus = "active" | "pending" | "disabled";
 
 export interface Company {
   id: string;

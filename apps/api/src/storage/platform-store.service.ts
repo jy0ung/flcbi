@@ -1,6 +1,9 @@
 import { BadRequestException, Inject, Injectable, NotFoundException } from "@nestjs/common";
+import { randomUUID } from "node:crypto";
 import {
+  type AppRole,
   buildAgingSummary,
+  type Branch,
   createDefaultDashboardPreferences,
   createDefaultSlaPolicies,
   getPermissionsForUser,
@@ -47,6 +50,7 @@ export class PlatformStoreService implements PlatformRepository {
   private readonly slasByCompany = new Map<string, SlaPolicy[]>();
   private readonly dashboardPreferencesByUser = new Map<string, DashboardPreferences>();
   private readonly importPreviews = new Map<string, ImportPreview>();
+  private readonly branches: Branch[] = [];
   private vehicles: VehicleCanonical[] = [];
   private imports: ImportBatch[] = [];
   private qualityIssues: DataQualityIssue[] = [];
@@ -92,11 +96,101 @@ export class PlatformStoreService implements PlatformRepository {
 
   listRoles(): PlatformRoleDefinition[] {
     return [
+      { role: "super_admin", description: "Platform-wide administrators for all tenants and controls." },
       { role: "company_admin", description: "Enterprise administrators for company-level analytics governance." },
       { role: "director", description: "Leadership access to executive reporting and audit visibility." },
+      { role: "general_manager", description: "Cross-branch operators with broad read and action access." },
       { role: "manager", description: "Branch-scoped operational access with exports." },
+      { role: "sales", description: "Sales users with branch-scoped operational visibility." },
+      { role: "accounts", description: "Accounts users focused on finance and disbursement flow." },
       { role: "analyst", description: "Curated and governed explore access for analytics users." },
     ];
+  }
+
+  listBranches(user: User) {
+    return this.branches.filter((branch) => branch.companyId === user.companyId);
+  }
+
+  createUser(
+    user: User,
+    input: { email: string; name: string; role: AppRole; branchId?: string | null; password: string; status?: User["status"] },
+  ) {
+    const normalizedEmail = input.email.trim().toLowerCase();
+    if (this.users.some((candidate) => candidate.email.toLowerCase() === normalizedEmail)) {
+      throw new BadRequestException("A user with that email already exists");
+    }
+
+    const created: User = {
+      id: randomUUID(),
+      email: normalizedEmail,
+      name: input.name.trim(),
+      role: input.role,
+      companyId: user.companyId,
+      branchId: input.branchId ?? undefined,
+      status: input.status ?? "active",
+    };
+
+    this.users.push(created);
+    this.addAuditEvent({
+      action: "user_created",
+      entity: "user",
+      entityId: created.id,
+      userId: user.id,
+      userName: user.name,
+      details: `Created ${created.email} with role ${created.role}`,
+    });
+    return created;
+  }
+
+  updateUser(
+    user: User,
+    targetUserId: string,
+    input: { email?: string; name?: string; role?: AppRole; branchId?: string | null; password?: string; status?: User["status"] },
+  ) {
+    const existing = this.users.find((candidate) => candidate.id === targetUserId && candidate.companyId === user.companyId);
+    if (!existing) {
+      throw new NotFoundException(`User ${targetUserId} not found`);
+    }
+
+    if (input.email) {
+      const normalizedEmail = input.email.trim().toLowerCase();
+      const duplicate = this.users.find((candidate) => candidate.id !== targetUserId && candidate.email.toLowerCase() === normalizedEmail);
+      if (duplicate) {
+        throw new BadRequestException("A user with that email already exists");
+      }
+      existing.email = normalizedEmail;
+    }
+    if (input.name) existing.name = input.name.trim();
+    if (input.role) existing.role = input.role;
+    if (input.branchId !== undefined) existing.branchId = input.branchId ?? undefined;
+    if (input.status) existing.status = input.status;
+
+    this.addAuditEvent({
+      action: "user_updated",
+      entity: "user",
+      entityId: existing.id,
+      userId: user.id,
+      userName: user.name,
+      details: `Updated ${existing.email}`,
+    });
+    return existing;
+  }
+
+  deleteUser(user: User, targetUserId: string) {
+    const existing = this.users.find((candidate) => candidate.id === targetUserId && candidate.companyId === user.companyId);
+    if (!existing) {
+      throw new NotFoundException(`User ${targetUserId} not found`);
+    }
+
+    existing.status = "disabled";
+    this.addAuditEvent({
+      action: "user_deactivated",
+      entity: "user",
+      entityId: existing.id,
+      userId: user.id,
+      userName: user.name,
+      details: `Deactivated ${existing.email}`,
+    });
   }
 
   listAlerts(user: User) {

@@ -9,6 +9,8 @@ interface StatusBadgeProps {
 const statusStyles: Record<string, string> = {
   published: 'bg-success/15 text-success',
   active: 'bg-success/15 text-success',
+  pending: 'bg-warning/15 text-warning',
+  disabled: 'bg-muted text-muted-foreground',
   validated: 'bg-info/15 text-info',
   validating: 'bg-info/15 text-info',
   uploaded: 'bg-muted text-muted-foreground',

@@ -41,6 +41,9 @@ export class PlatformAuthSessionService implements AuthSessionService {
     if (!user) {
       throw new UnauthorizedException("User profile is not provisioned");
     }
+    if (user.status && user.status !== "active") {
+      throw new UnauthorizedException("User account is not active");
+    }
 
     return this.toSupabaseSession(user, token, this.expiresAtFromToken(token));
   }

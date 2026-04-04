@@ -3,6 +3,7 @@ import type {
   AlertRule,
   AppRole,
   AuditEvent,
+  Branch,
   DashboardPreferences,
   DataQualityIssue,
   ExplorerQuery,
@@ -47,6 +48,17 @@ export interface PlatformRepository {
   addAuditEvent(event: Omit<AuditEvent, "id" | "createdAt">): Awaitable<void>;
   listUsers(user: User): Awaitable<User[]>;
   listRoles(): Awaitable<PlatformRoleDefinition[]>;
+  listBranches(user: User): Awaitable<Branch[]>;
+  createUser(
+    user: User,
+    input: { email: string; name: string; role: AppRole; branchId?: string | null; password: string; status?: User["status"] },
+  ): Awaitable<User>;
+  updateUser(
+    user: User,
+    targetUserId: string,
+    input: { email?: string; name?: string; role?: AppRole; branchId?: string | null; password?: string; status?: User["status"] },
+  ): Awaitable<User>;
+  deleteUser(user: User, targetUserId: string): Awaitable<void>;
   listAlerts(user: User): Awaitable<AlertRule[]>;
   createAlert(user: User, input: Omit<AlertRule, "id" | "createdBy" | "companyId">): Awaitable<AlertRule>;
   listImports(user: User): Awaitable<ImportBatch[]>;

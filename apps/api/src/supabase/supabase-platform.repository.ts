@@ -8,6 +8,7 @@ import {
 } from "@nestjs/common";
 import {
   buildAgingSummary,
+  type Branch,
   createDefaultDashboardPreferences,
   matchesExplorerPreset,
   navigationItems,
@@ -15,6 +16,7 @@ import {
   parseWorkbook,
   publishCanonical,
   queryVehicles,
+  type AppRole,
   type AlertRule,
   type AuditEvent,
   type DashboardPreferences,
@@ -170,6 +172,13 @@ interface SavedViewRow {
   definition: { executiveMetricIds?: string[] } | null;
 }
 
+interface BranchRow {
+  id: string;
+  company_id: string;
+  code: string;
+  name: string;
+}
+
 @Injectable()
 export class SupabasePlatformRepository implements PlatformRepository {
   private readonly importPreviews = new Map<string, ImportPreview>();
@@ -273,7 +282,7 @@ export class SupabasePlatformRepository implements PlatformRepository {
     const { data, error } = await client
       .schema("app")
       .from("user_profiles")
-      .select("id, email, display_name, app_role, company_id, primary_branch_id")
+      .select("id, email, display_name, app_role, company_id, primary_branch_id, status")
       .eq("company_id", companyId)
       .order("email", { ascending: true });
 
@@ -286,6 +295,207 @@ export class SupabasePlatformRepository implements PlatformRepository {
 
   listRoles(): PlatformRoleDefinition[] {
     return this.fallback.listRoles();
+  }
+
+  async listBranches(user: User): Promise<Branch[]> {
+    if (!this.supabase.isConfigured()) {
+      return this.fallback.listBranches(user);
+    }
+
+    const companyId = this.requireCompanyId(user);
+    return this.fetchCompanyBranches(companyId);
+  }
+
+  async createUser(
+    user: User,
+    input: { email: string; name: string; role: AppRole; branchId?: string | null; password: string; status?: User["status"] },
+  ): Promise<User> {
+    if (!this.supabase.isConfigured()) {
+      return this.fallback.createUser(user, input);
+    }
+
+    const companyId = this.requireCompanyId(user);
+    const normalizedEmail = input.email.trim().toLowerCase();
+    const normalizedName = input.name.trim();
+    const targetStatus = input.status ?? "active";
+
+    const existingProfile = await this.fetchProfileByEmail(normalizedEmail);
+    if (existingProfile) {
+      throw new BadRequestException("A user with that email already exists");
+    }
+
+    const existingAuthUser = await this.findAuthUserByEmail(normalizedEmail);
+    if (existingAuthUser) {
+      throw new BadRequestException("A Supabase user with that email already exists");
+    }
+
+    await this.ensureBranchBelongsToCompany(companyId, input.branchId ?? null);
+
+    const client = this.supabase.getAdminClient();
+    const { data, error } = await client.auth.admin.createUser({
+      email: normalizedEmail,
+      password: input.password,
+      email_confirm: true,
+      user_metadata: { name: normalizedName },
+      app_metadata: { provider: "email" },
+      ban_duration: targetStatus === "active" ? "none" : "876000h",
+    });
+
+    if (error || !data.user) {
+      throw new BadRequestException(error?.message ?? "Failed to create user");
+    }
+
+    await this.upsertUserProfileRow({
+      id: data.user.id,
+      companyId,
+      branchId: input.branchId ?? null,
+      email: normalizedEmail,
+      displayName: normalizedName,
+      role: input.role,
+      status: targetStatus,
+    });
+    await this.replaceUserBranchAccess(companyId, data.user.id, input.branchId ?? null);
+
+    await this.addAuditEvent({
+      action: "user_created",
+      entity: "user",
+      entityId: data.user.id,
+      userId: user.id,
+      userName: user.name,
+      details: `Created ${normalizedEmail} with role ${input.role}`,
+    });
+
+    const createdProfile = await this.fetchProfileByDbId(data.user.id);
+    if (!createdProfile) {
+      throw new InternalServerErrorException("User profile was not created");
+    }
+
+    return toContractUser(createdProfile);
+  }
+
+  async updateUser(
+    user: User,
+    targetUserId: string,
+    input: { email?: string; name?: string; role?: AppRole; branchId?: string | null; password?: string; status?: User["status"] },
+  ): Promise<User> {
+    if (!this.supabase.isConfigured()) {
+      return this.fallback.updateUser(user, targetUserId, input);
+    }
+
+    const companyId = this.requireCompanyId(user);
+    const existingProfile = await this.fetchProfileByDbId(targetUserId);
+    if (!existingProfile || existingProfile.company_id !== companyId) {
+      throw new NotFoundException(`User ${targetUserId} not found`);
+    }
+
+    if (targetUserId === user.id) {
+      if (input.role && input.role !== user.role) {
+        throw new BadRequestException("You cannot change your own role");
+      }
+      if (input.status && input.status !== "active") {
+        throw new BadRequestException("You cannot deactivate your own account");
+      }
+    }
+
+    const nextEmail = input.email ? input.email.trim().toLowerCase() : existingProfile.email;
+    const nextName = input.name?.trim() || existingProfile.display_name;
+    const nextRole = input.role ?? toContractUser(existingProfile).role;
+    const nextBranchId = input.branchId !== undefined ? input.branchId : existingProfile.primary_branch_id;
+    const nextStatus = input.status ?? (existingProfile.status ?? "pending");
+
+    const duplicateProfile = nextEmail !== existingProfile.email
+      ? await this.fetchProfileByEmail(nextEmail)
+      : null;
+    if (duplicateProfile && duplicateProfile.id !== targetUserId) {
+      throw new BadRequestException("A user with that email already exists");
+    }
+
+    await this.ensureBranchBelongsToCompany(companyId, nextBranchId ?? null);
+
+    const client = this.supabase.getAdminClient();
+    const { error: authError } = await client.auth.admin.updateUserById(targetUserId, {
+      email: nextEmail !== existingProfile.email ? nextEmail : undefined,
+      password: input.password || undefined,
+      user_metadata: { name: nextName },
+      ban_duration: nextStatus === "active" ? "none" : "876000h",
+    });
+
+    if (authError) {
+      throw new BadRequestException(authError.message);
+    }
+
+    await this.upsertUserProfileRow({
+      id: targetUserId,
+      companyId,
+      branchId: nextBranchId ?? null,
+      email: nextEmail,
+      displayName: nextName,
+      role: nextRole,
+      status: nextStatus,
+    });
+    if (input.branchId !== undefined) {
+      await this.replaceUserBranchAccess(companyId, targetUserId, nextBranchId ?? null);
+    }
+
+    await this.addAuditEvent({
+      action: "user_updated",
+      entity: "user",
+      entityId: targetUserId,
+      userId: user.id,
+      userName: user.name,
+      details: `Updated ${nextEmail}`,
+    });
+
+    const updatedProfile = await this.fetchProfileByDbId(targetUserId);
+    if (!updatedProfile) {
+      throw new InternalServerErrorException("User profile was not found after update");
+    }
+
+    return toContractUser(updatedProfile);
+  }
+
+  async deleteUser(user: User, targetUserId: string): Promise<void> {
+    if (!this.supabase.isConfigured()) {
+      return this.fallback.deleteUser(user, targetUserId);
+    }
+
+    const companyId = this.requireCompanyId(user);
+    const existingProfile = await this.fetchProfileByDbId(targetUserId);
+    if (!existingProfile || existingProfile.company_id !== companyId) {
+      throw new NotFoundException(`User ${targetUserId} not found`);
+    }
+    if (targetUserId === user.id) {
+      throw new BadRequestException("You cannot deactivate your own account");
+    }
+
+    const client = this.supabase.getAdminClient();
+    const { error: authError } = await client.auth.admin.updateUserById(targetUserId, {
+      ban_duration: "876000h",
+    });
+
+    if (authError) {
+      throw new BadRequestException(authError.message);
+    }
+
+    const { error: profileError } = await client
+      .schema("app")
+      .from("user_profiles")
+      .update({ status: "disabled" })
+      .eq("id", targetUserId)
+      .eq("company_id", companyId);
+
+    if (profileError) {
+      throw new InternalServerErrorException(profileError.message);
+    }
+
+    await this.addAuditEvent({
+      action: "user_deactivated",
+      entity: "user",
+      entityId: targetUserId,
+      userId: user.id,
+      userName: user.name,
+      details: `Deactivated ${existingProfile.email}`,
+    });
   }
 
   async listAlerts(user: User): Promise<AlertRule[]> {
@@ -861,7 +1071,7 @@ export class SupabasePlatformRepository implements PlatformRepository {
     const { data, error } = await client
       .schema("app")
       .from("user_profiles")
-      .select("id, email, display_name, app_role, company_id, primary_branch_id")
+      .select("id, email, display_name, app_role, company_id, primary_branch_id, status")
       .eq("email", email.toLowerCase())
       .maybeSingle();
 
@@ -876,7 +1086,7 @@ export class SupabasePlatformRepository implements PlatformRepository {
     const { data, error } = await client
       .schema("app")
       .from("user_profiles")
-      .select("id, email, display_name, app_role, company_id, primary_branch_id")
+      .select("id, email, display_name, app_role, company_id, primary_branch_id, status")
       .eq("id", id)
       .maybeSingle();
 
@@ -894,6 +1104,138 @@ export class SupabasePlatformRepository implements PlatformRepository {
   private async resolveDbUserIdFromUser(user: User) {
     const profile = await this.fetchProfileByEmail(user.email);
     return profile?.id ?? null;
+  }
+
+  private async findAuthUserByEmail(email: string) {
+    const client = this.supabase.getAdminClient();
+    let page = 1;
+
+    while (true) {
+      const { data, error } = await client.auth.admin.listUsers({
+        page,
+        perPage: 200,
+      });
+
+      if (error) {
+        throw new InternalServerErrorException(error.message);
+      }
+
+      const found = data.users.find((candidate) => candidate.email?.toLowerCase() === email.toLowerCase());
+      if (found) {
+        return found;
+      }
+
+      if (data.users.length < 200) {
+        return null;
+      }
+
+      page += 1;
+    }
+  }
+
+  private async fetchCompanyBranches(companyId: string): Promise<Branch[]> {
+    const client = this.supabase.getAdminClient();
+    const { data, error } = await client
+      .schema("app")
+      .from("branches")
+      .select("id, company_id, code, name")
+      .eq("company_id", companyId)
+      .order("code", { ascending: true });
+
+    if (error) {
+      throw new InternalServerErrorException(error.message);
+    }
+
+    return ((data ?? []) as BranchRow[]).map((row) => ({
+      id: row.id,
+      companyId: row.company_id,
+      code: row.code,
+      name: row.name,
+    }));
+  }
+
+  private async ensureBranchBelongsToCompany(companyId: string, branchId: string | null) {
+    if (!branchId) {
+      return;
+    }
+
+    const client = this.supabase.getAdminClient();
+    const { data, error } = await client
+      .schema("app")
+      .from("branches")
+      .select("id")
+      .eq("company_id", companyId)
+      .eq("id", branchId)
+      .maybeSingle();
+
+    if (error) {
+      throw new InternalServerErrorException(error.message);
+    }
+    if (!data) {
+      throw new BadRequestException("Selected branch does not belong to this company");
+    }
+  }
+
+  private async replaceUserBranchAccess(companyId: string, userId: string, branchId: string | null) {
+    const branches = await this.fetchCompanyBranches(companyId);
+    const nextBranchIds = branchId
+      ? [branchId]
+      : branches.map((branch) => branch.id);
+
+    const client = this.supabase.getAdminClient();
+    const { error: deleteError } = await client
+      .schema("app")
+      .from("user_branch_access")
+      .delete()
+      .eq("user_id", userId);
+
+    if (deleteError) {
+      throw new InternalServerErrorException(deleteError.message);
+    }
+
+    if (nextBranchIds.length === 0) {
+      return;
+    }
+
+    const { error: insertError } = await client
+      .schema("app")
+      .from("user_branch_access")
+      .insert(nextBranchIds.map((nextBranchId) => ({
+        user_id: userId,
+        branch_id: nextBranchId,
+      })));
+
+    if (insertError) {
+      throw new InternalServerErrorException(insertError.message);
+    }
+  }
+
+  private async upsertUserProfileRow(input: {
+    id: string;
+    companyId: string;
+    branchId: string | null;
+    email: string;
+    displayName: string;
+    role: AppRole;
+    status: NonNullable<User["status"]>;
+  }) {
+    const client = this.supabase.getAdminClient();
+    const { error } = await client
+      .schema("app")
+      .from("user_profiles")
+      .upsert({
+        id: input.id,
+        company_id: input.companyId,
+        primary_branch_id: input.branchId,
+        email: input.email,
+        display_name: input.displayName,
+        app_role: input.role,
+        status: input.status,
+      }, { onConflict: "id" });
+
+    if (error) {
+      throw new InternalServerErrorException(error.message);
+    }
   }
 
   private async fetchImportRows(user: User) {

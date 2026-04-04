@@ -1,9 +1,12 @@
 import type {
+  AdminBranchesResponse,
   AdminRolesResponse,
+  AdminUserResponse,
   AdminUsersResponse,
   AgingSummaryResponse,
   AlertsResponse,
   AuditResponse,
+  CreateAdminUserRequest,
   DashboardPreferencesResponse,
   ExecutiveDashboardMetricId,
   ExplorerQueryRequest,
@@ -17,6 +20,7 @@ import type {
   PublishImportResponse,
   QualityIssuesResponse,
   SlaPoliciesResponse,
+  UpdateAdminUserRequest,
   VehicleDetailResponse,
 } from "@flcbi/contracts";
 import { getSupabaseAccessToken } from "./supabase";
@@ -153,7 +157,27 @@ export const apiClient = {
   getAdminUsers() {
     return request<AdminUsersResponse>("/admin/users");
   },
+  getAdminBranches() {
+    return request<AdminBranchesResponse>("/admin/branches");
+  },
   getAdminRoles() {
     return request<AdminRolesResponse>("/admin/roles");
+  },
+  createAdminUser(input: CreateAdminUserRequest) {
+    return request<AdminUserResponse>("/admin/users", {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+  },
+  updateAdminUser(id: string, input: UpdateAdminUserRequest) {
+    return request<AdminUserResponse>(`/admin/users/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify(input),
+    });
+  },
+  deleteAdminUser(id: string) {
+    return request<{ success: boolean }>(`/admin/users/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    });
   },
 };
