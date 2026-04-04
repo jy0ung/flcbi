@@ -11,6 +11,17 @@ node_modules
 dist
 dist-ssr
 *.local
+.env.test-server.local
+.local-storage
+coverage
+apps/*/dist
+apps/*/.tsbuildinfo
+.cache
+.backups
+.playwright-cli
+output
+supabase/.branches
+supabase/.temp
 
 # Editor directories and files
 .vscode/*

@@ -1,10 +1,14 @@
-import React, { createContext, useContext, useState, useCallback } from 'react';
-import { User, AppRole } from '@/types';
-import { demoUser } from '@/data/demo-data';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import type { AppRole, AuthSession, User } from "@flcbi/contracts";
+import { apiClient } from "@/lib/api-client";
+import { isSupabaseConfigured, supabase } from "@/lib/supabase";
 
 interface AuthContextType {
   user: User | null;
+  session: AuthSession | null;
   isAuthenticated: boolean;
+  isLoading: boolean;
   login: (email: string, password: string) => Promise<boolean>;
   logout: () => void;
   hasRole: (roles: AppRole[]) => boolean;
@@ -12,42 +16,113 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | null>(null);
 
-const DEMO_USERS: Record<string, User> = {
-  'director@flc.com': { ...demoUser },
-  'admin@flc.com': { id: 'u2', email: 'admin@flc.com', name: 'Admin User', role: 'company_admin', companyId: 'c1' },
-  'manager@flc.com': { id: 'u3', email: 'manager@flc.com', name: 'Branch Manager', role: 'manager', companyId: 'c1', branchId: 'br-0' },
-  'analyst@flc.com': { id: 'u4', email: 'analyst@flc.com', name: 'Data Analyst', role: 'analyst', companyId: 'c1' },
-};
-
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<User | null>(() => {
-    const saved = localStorage.getItem('flc_bi_user');
-    return saved ? JSON.parse(saved) : null;
-  });
+  const queryClient = useQueryClient();
+  const [session, setSession] = useState<AuthSession | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
 
-  const login = useCallback(async (email: string, _password: string): Promise<boolean> => {
-    const u = DEMO_USERS[email.toLowerCase()];
-    if (u) {
-      setUser(u);
-      localStorage.setItem('flc_bi_user', JSON.stringify(u));
-      return true;
+  useEffect(() => {
+    if (!isSupabaseConfigured || !supabase) {
+      setSession(null);
+      setIsLoading(false);
+      return;
     }
-    return false;
-  }, []);
+
+    let mounted = true;
+
+    const syncSession = async () => {
+      try {
+        const { data } = await supabase.auth.getSession();
+        if (!data.session?.access_token) {
+          if (mounted) setSession(null);
+          return;
+        }
+
+        const response = await apiClient.me();
+        if (mounted) {
+          setSession(response.session);
+        }
+      } catch {
+        if (mounted) {
+          setSession(null);
+        }
+        await supabase.auth.signOut({ scope: "local" }).catch(() => undefined);
+      } finally {
+        if (mounted) {
+          setIsLoading(false);
+        }
+      }
+    };
+
+    void syncSession();
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, authSession) => {
+      if (!authSession) {
+        setSession(null);
+        setIsLoading(false);
+        void queryClient.clear();
+        return;
+      }
+
+      void syncSession();
+    });
+
+    return () => {
+      mounted = false;
+      subscription.unsubscribe();
+    };
+  }, [queryClient]);
+
+  const login = useCallback(async (email: string, password: string): Promise<boolean> => {
+    if (!isSupabaseConfigured || !supabase) {
+      setSession(null);
+      return false;
+    }
+
+    try {
+      const { error } = await supabase.auth.signInWithPassword({ email, password });
+      if (error) {
+        setSession(null);
+        return false;
+      }
+
+      const response = await apiClient.me();
+      setSession(response.session);
+      await queryClient.invalidateQueries();
+      return true;
+    } catch {
+      setSession(null);
+      return false;
+    }
+  }, [queryClient]);
 
   const logout = useCallback(() => {
-    setUser(null);
-    localStorage.removeItem('flc_bi_user');
-  }, []);
+    setSession(null);
+    void queryClient.clear();
+    if (supabase) {
+      void supabase.auth.signOut({ scope: "local" }).catch(() => undefined);
+    }
+  }, [queryClient]);
 
   const hasRole = useCallback((roles: AppRole[]): boolean => {
+    const user = session?.user;
     if (!user) return false;
-    if (user.role === 'super_admin') return true;
+    if (user.role === "super_admin") return true;
     return roles.includes(user.role);
-  }, [user]);
+  }, [session]);
+
+  const value = useMemo<AuthContextType>(() => ({
+    user: session?.user ?? null,
+    session,
+    isAuthenticated: Boolean(session?.token),
+    isLoading,
+    login,
+    logout,
+    hasRole,
+  }), [session, isLoading, login, logout, hasRole]);
 
   return (
-    <AuthContext.Provider value={{ user, isAuthenticated: !!user, login, logout, hasRole }}>
+    <AuthContext.Provider value={value}>
       {children}
     </AuthContext.Provider>
   );

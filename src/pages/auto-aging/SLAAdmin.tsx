@@ -1,17 +1,41 @@
 import React, { useState } from 'react';
 import { PageHeader } from '@/components/shared/PageHeader';
-import { useData } from '@/contexts/DataContext';
+import { QueryErrorState } from '@/components/shared/QueryErrorState';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Save } from 'lucide-react';
+import { useSlaPolicies, useUpdateSla } from '@/hooks/api/use-platform';
 
 export default function SLAAdmin() {
-  const { slas, updateSla } = useData();
+  const { data, error, isError, isLoading, refetch } = useSlaPolicies();
+  const updateSla = useUpdateSla();
   const [edits, setEdits] = useState<Record<string, number>>({});
+  const slas = data?.items ?? [];
+
+  if (isLoading) {
+    return <div className="text-sm text-muted-foreground">Loading SLA policies...</div>;
+  }
+
+  if (isError) {
+    return (
+      <div className="space-y-6 animate-fade-in">
+        <PageHeader
+          title="SLA Policies"
+          description="Configure target days for each KPI milestone pair"
+          breadcrumbs={[{ label: 'FLC BI' }, { label: 'Auto Aging' }, { label: 'SLA Policies' }]}
+        />
+        <QueryErrorState
+          title="Could not load SLA policies"
+          error={error}
+          onRetry={() => void refetch()}
+        />
+      </div>
+    );
+  }
 
   const handleSave = (id: string) => {
     if (edits[id] !== undefined) {
-      updateSla(id, edits[id]);
+      updateSla.mutate({ id, slaDays: edits[id] });
       setEdits(prev => { const n = { ...prev }; delete n[id]; return n; });
     }
   };

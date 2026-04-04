@@ -1,13 +1,15 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { PageHeader } from '@/components/shared/PageHeader';
+import { QueryErrorState } from '@/components/shared/QueryErrorState';
 import { StatusBadge } from '@/components/shared/StatusBadge';
-import { useData } from '@/contexts/DataContext';
 import { Button } from '@/components/ui/button';
 import { Download, Search } from 'lucide-react';
+import { useExplorer } from '@/hooks/api/use-platform';
+import { downloadCsv } from '@/lib/export';
+import type { VehicleCanonical } from '@flcbi/contracts';
 
 export default function VehicleExplorer() {
-  const { vehicles } = useData();
   const navigate = useNavigate();
   const [search, setSearch] = useState('');
   const [branchFilter, setBranchFilter] = useState('all');
@@ -15,24 +17,25 @@ export default function VehicleExplorer() {
   const [paymentFilter, setPaymentFilter] = useState('all');
   const [sortField, setSortField] = useState<string>('bg_to_delivery');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
-
-  const branches = [...new Set(vehicles.map(v => v.branch_code))].sort();
-  const models = [...new Set(vehicles.map(v => v.model))].sort();
-  const payments = [...new Set(vehicles.map(v => v.payment_method))].sort();
-
-  const filtered = vehicles.filter(v => {
-    if (search && !v.chassis_no.toLowerCase().includes(search.toLowerCase()) && !v.customer_name.toLowerCase().includes(search.toLowerCase())) return false;
-    if (branchFilter !== 'all' && v.branch_code !== branchFilter) return false;
-    if (modelFilter !== 'all' && v.model !== modelFilter) return false;
-    if (paymentFilter !== 'all' && v.payment_method !== paymentFilter) return false;
-    return true;
-  }).sort((a, b) => {
-    const aVal = (a as unknown as Record<string, unknown>)[sortField] as number ?? 0;
-    const bVal = (b as unknown as Record<string, unknown>)[sortField] as number ?? 0;
-    return sortDir === 'desc' ? bVal - aVal : aVal - bVal;
-  });
+  const [page, setPage] = useState(1);
+  const query = {
+    search,
+    branch: branchFilter,
+    model: modelFilter,
+    payment: paymentFilter,
+    page,
+    pageSize: 50,
+    sortField: sortField as keyof VehicleCanonical,
+    sortDirection: sortDir,
+  };
+  const { data, error, isError, isLoading, refetch } = useExplorer(query);
+  const result = data?.result;
+  const branches = result?.filterOptions.branches ?? [];
+  const models = result?.filterOptions.models ?? [];
+  const payments = result?.filterOptions.payments ?? [];
 
   const toggleSort = (field: string) => {
+    setPage(1);
     if (sortField === field) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
     else { setSortField(field); setSortDir('desc'); }
   };
@@ -43,30 +46,56 @@ export default function VehicleExplorer() {
     </th>
   );
 
+  if (isError) {
+    return (
+      <div className="space-y-4 animate-fade-in">
+        <PageHeader
+          title="Vehicle Explorer"
+          description="Search, filter, and export vehicle milestones"
+          breadcrumbs={[{ label: 'FLC BI' }, { label: 'Auto Aging' }, { label: 'Vehicle Explorer' }]}
+        />
+        <QueryErrorState
+          title="Could not load vehicle explorer"
+          error={error}
+          onRetry={() => void refetch()}
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-4 animate-fade-in">
       <PageHeader
         title="Vehicle Explorer"
-        description={`${filtered.length} of ${vehicles.length} vehicles`}
+        description={result ? `${result.items.length} of ${result.total} vehicles` : 'Loading vehicles'}
         breadcrumbs={[{ label: 'FLC BI' }, { label: 'Auto Aging' }, { label: 'Vehicle Explorer' }]}
-        actions={<Button variant="outline" size="sm"><Download className="h-3.5 w-3.5 mr-1" />Export CSV</Button>}
+        actions={
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => result && downloadCsv("vehicle-explorer.csv", result.items.map((item) => ({ ...item })))}
+            disabled={!result || result.items.length === 0}
+          >
+            <Download className="h-3.5 w-3.5 mr-1" />Export CSV
+          </Button>
+        }
       />
 
       {/* Filters */}
       <div className="glass-panel p-4 flex flex-wrap items-center gap-3">
         <div className="relative">
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search chassis or customer..." className="h-8 w-56 rounded-md bg-secondary border border-border pl-8 pr-3 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring" />
+          <input value={search} onChange={e => { setSearch(e.target.value); setPage(1); }} placeholder="Search chassis or customer..." className="h-8 w-56 rounded-md bg-secondary border border-border pl-8 pr-3 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring" />
         </div>
-        <select value={branchFilter} onChange={e => setBranchFilter(e.target.value)} className="h-8 rounded-md bg-secondary border border-border px-3 text-xs text-foreground">
+        <select value={branchFilter} onChange={e => { setBranchFilter(e.target.value); setPage(1); }} className="h-8 rounded-md bg-secondary border border-border px-3 text-xs text-foreground">
           <option value="all">All Branches</option>
           {branches.map(b => <option key={b} value={b}>{b}</option>)}
         </select>
-        <select value={modelFilter} onChange={e => setModelFilter(e.target.value)} className="h-8 rounded-md bg-secondary border border-border px-3 text-xs text-foreground">
+        <select value={modelFilter} onChange={e => { setModelFilter(e.target.value); setPage(1); }} className="h-8 rounded-md bg-secondary border border-border px-3 text-xs text-foreground">
           <option value="all">All Models</option>
           {models.map(m => <option key={m} value={m}>{m}</option>)}
         </select>
-        <select value={paymentFilter} onChange={e => setPaymentFilter(e.target.value)} className="h-8 rounded-md bg-secondary border border-border px-3 text-xs text-foreground">
+        <select value={paymentFilter} onChange={e => { setPaymentFilter(e.target.value); setPage(1); }} className="h-8 rounded-md bg-secondary border border-border px-3 text-xs text-foreground">
           <option value="all">All Payments</option>
           {payments.map(p => <option key={p} value={p}>{p}</option>)}
         </select>
@@ -93,7 +122,14 @@ export default function VehicleExplorer() {
               </tr>
             </thead>
             <tbody>
-              {filtered.slice(0, 100).map(v => (
+              {result && result.items.length === 0 && (
+                <tr>
+                  <td colSpan={12} className="px-3 py-10 text-center text-sm text-muted-foreground">
+                    No vehicles match the current filters yet.
+                  </td>
+                </tr>
+              )}
+              {result?.items.map(v => (
                 <tr key={v.id} className="data-table-row cursor-pointer" onClick={() => navigate(`/auto-aging/vehicles/${v.chassis_no}`)}>
                   <td className="px-3 py-2 font-mono text-xs text-primary">{v.chassis_no}</td>
                   <td className="px-3 py-2 text-foreground">{v.branch_code}</td>
@@ -113,7 +149,16 @@ export default function VehicleExplorer() {
             </tbody>
           </table>
         </div>
-        {filtered.length > 100 && <p className="text-xs text-muted-foreground text-center py-3">Showing 100 of {filtered.length} results</p>}
+        {isLoading && <p className="text-xs text-muted-foreground text-center py-3">Loading vehicles...</p>}
+        {result && (
+          <div className="flex items-center justify-between px-4 py-3 border-t border-border/50 text-xs text-muted-foreground">
+            <span>Page {result.page} of {Math.max(1, Math.ceil(result.total / result.pageSize))}</span>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm" onClick={() => setPage((current) => Math.max(1, current - 1))} disabled={page === 1}>Previous</Button>
+              <Button variant="outline" size="sm" onClick={() => setPage((current) => current + 1)} disabled={result.page * result.pageSize >= result.total}>Next</Button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

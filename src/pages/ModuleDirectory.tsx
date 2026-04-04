@@ -2,7 +2,7 @@ import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { PageHeader } from '@/components/shared/PageHeader';
 import { StatusBadge } from '@/components/shared/StatusBadge';
-import { platformModules } from '@/data/demo-data';
+import { platformModules } from '@flcbi/contracts';
 import { Timer, DollarSign, TrendingUp, Settings, Package, Users, UserCheck, Brain } from 'lucide-react';
 
 const iconMap: Record<string, React.ElementType> = { Timer, DollarSign, TrendingUp, Settings, Package, Users, UserCheck, Brain };

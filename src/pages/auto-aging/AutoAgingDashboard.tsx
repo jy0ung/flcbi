@@ -2,29 +2,68 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { PageHeader } from '@/components/shared/PageHeader';
 import { KpiCard } from '@/components/shared/KpiCard';
+import { QueryErrorState } from '@/components/shared/QueryErrorState';
 import { StatusBadge } from '@/components/shared/StatusBadge';
-import { useData } from '@/contexts/DataContext';
 import { Button } from '@/components/ui/button';
 import { RefreshCw, Download, Filter } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { AgingTrendChart } from '@/components/charts/AgingTrendChart';
 import { OutlierScatterChart } from '@/components/charts/OutlierScatterChart';
 import { PaymentPieChart } from '@/components/charts/PaymentPieChart';
+import { useAgingSummary } from '@/hooks/api/use-platform';
 
 export default function AutoAgingDashboard() {
-  const { kpiSummaries, vehicles, qualityIssues, lastRefresh, refreshKpis } = useData();
   const navigate = useNavigate();
   const [branchFilter, setBranchFilter] = useState<string>('all');
   const [modelFilter, setModelFilter] = useState<string>('all');
-
-  const branches = [...new Set(vehicles.map(v => v.branch_code))].sort();
-  const models = [...new Set(vehicles.map(v => v.model))].sort();
-
-  const filtered = vehicles.filter(v => {
-    if (branchFilter !== 'all' && v.branch_code !== branchFilter) return false;
-    if (modelFilter !== 'all' && v.model !== modelFilter) return false;
-    return true;
+  const { data, error, isError, isLoading, refetch } = useAgingSummary({
+    branch: branchFilter,
+    model: modelFilter,
   });
+  const summary = data?.summary;
+
+  if (isLoading) {
+    return <div className="text-sm text-muted-foreground">Loading auto aging dashboard...</div>;
+  }
+
+  if (isError || !summary) {
+    return (
+      <div className="space-y-6 animate-fade-in">
+        <PageHeader
+          title="Auto Aging Dashboard"
+          description="Vehicle aging analysis across operational milestones"
+          breadcrumbs={[{ label: 'FLC BI' }, { label: 'Auto Aging' }, { label: 'Dashboard' }]}
+        />
+        <QueryErrorState
+          title="Could not load auto aging dashboard"
+          error={error}
+          onRetry={() => void refetch()}
+        />
+      </div>
+    );
+  }
+
+  if (summary.totalVehicles === 0) {
+    return (
+      <div className="space-y-6 animate-fade-in">
+        <PageHeader
+          title="Auto Aging Dashboard"
+          description="Vehicle aging analysis across operational milestones"
+          breadcrumbs={[{ label: 'FLC BI' }, { label: 'Auto Aging' }, { label: 'Dashboard' }]}
+        />
+        <div className="glass-panel p-8 text-center">
+          <p className="text-lg font-semibold text-foreground mb-2">No vehicle data has been published yet</p>
+          <p className="text-sm text-muted-foreground mb-5">
+            Upload a validated workbook to populate operational metrics, quality checks, and trend analysis.
+          </p>
+          <Button onClick={() => navigate('/auto-aging/import')}>Open Import Center</Button>
+        </div>
+      </div>
+    );
+  }
+
+  const branches = summary.filterOptions.branches;
+  const models = summary.filterOptions.models;
 
   const processStages = [
     { label: 'BG Date', short: 'BG' },
@@ -34,24 +73,6 @@ export default function AutoAgingDashboard() {
     { label: 'Delivery', short: 'DEL' },
     { label: 'Disbursement', short: 'DISB' },
   ];
-
-  const branchHeatmap = React.useMemo(() => {
-    const groups = new Map<string, { bgToDelivery: number[]; etdToEta: number[]; outletToDelivery: number[] }>();
-    filtered.forEach(v => {
-      const g = groups.get(v.branch_code) || { bgToDelivery: [], etdToEta: [], outletToDelivery: [] };
-      if (v.bg_to_delivery != null && v.bg_to_delivery >= 0) g.bgToDelivery.push(v.bg_to_delivery);
-      if (v.etd_to_eta != null && v.etd_to_eta >= 0) g.etdToEta.push(v.etd_to_eta);
-      if (v.outlet_received_to_delivery != null && v.outlet_received_to_delivery >= 0) g.outletToDelivery.push(v.outlet_received_to_delivery);
-      groups.set(v.branch_code, g);
-    });
-
-    return Array.from(groups.entries()).map(([branch, g]) => ({
-      branch,
-      bgToDelivery: g.bgToDelivery.length ? Math.round(g.bgToDelivery.reduce((s, v) => s + v, 0) / g.bgToDelivery.length) : 0,
-      etdToEta: g.etdToEta.length ? Math.round(g.etdToEta.reduce((s, v) => s + v, 0) / g.etdToEta.length) : 0,
-      outletToDelivery: g.outletToDelivery.length ? Math.round(g.outletToDelivery.reduce((s, v) => s + v, 0) / g.outletToDelivery.length) : 0,
-    })).sort((a, b) => b.bgToDelivery - a.bgToDelivery);
-  }, [filtered]);
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -63,9 +84,9 @@ export default function AutoAgingDashboard() {
           <div className="flex items-center gap-2">
             <div className="text-right mr-2">
               <p className="text-[10px] text-muted-foreground">Last refresh</p>
-              <p className="text-xs text-foreground">{new Date(lastRefresh).toLocaleString()}</p>
+              <p className="text-xs text-foreground">{new Date(summary.lastRefresh).toLocaleString()}</p>
             </div>
-            <Button variant="outline" size="sm" onClick={refreshKpis}><RefreshCw className="h-3.5 w-3.5 mr-1" />Refresh</Button>
+            <Button variant="outline" size="sm" onClick={() => void refetch()}><RefreshCw className="h-3.5 w-3.5 mr-1" />Refresh</Button>
             <Button variant="outline" size="sm"><Download className="h-3.5 w-3.5 mr-1" />Export</Button>
           </div>
         }
@@ -82,7 +103,7 @@ export default function AutoAgingDashboard() {
           <option value="all">All Models</option>
           {models.map(m => <option key={m} value={m}>{m}</option>)}
         </select>
-        <span className="text-xs text-muted-foreground ml-auto">{filtered.length} vehicles</span>
+        <span className="text-xs text-muted-foreground ml-auto">{summary.totalVehicles} vehicles</span>
       </div>
 
       {/* Process Flow */}
@@ -100,7 +121,7 @@ export default function AutoAgingDashboard() {
               {i < processStages.length - 1 && (
                 <div className="flex-1 h-0.5 bg-border min-w-[20px] relative">
                   <div className="absolute -top-3 left-1/2 -translate-x-1/2 text-[10px] text-primary font-medium whitespace-nowrap">
-                    {kpiSummaries[i]?.median ?? '—'}d
+                    {summary.kpiSummaries[i]?.median ?? '—'}d
                   </div>
                 </div>
               )}
@@ -111,7 +132,7 @@ export default function AutoAgingDashboard() {
 
       {/* KPI Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 xl:grid-cols-7 gap-3">
-        {kpiSummaries.map(kpi => (
+        {summary.kpiSummaries.map(kpi => (
           <KpiCard
             key={kpi.kpiId}
             label={kpi.shortLabel}
@@ -130,7 +151,7 @@ export default function AutoAgingDashboard() {
         <div className="md:col-span-2 glass-panel p-5">
           <h3 className="text-sm font-semibold text-foreground mb-4">Branch Comparison — Average Days</h3>
           <ResponsiveContainer width="100%" height={250}>
-            <BarChart data={branchHeatmap} margin={{ top: 5, right: 10, bottom: 5, left: 0 }}>
+            <BarChart data={summary.branchComparison} margin={{ top: 5, right: 10, bottom: 5, left: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="hsl(222, 20%, 15%)" />
               <XAxis dataKey="branch" tick={{ fontSize: 11, fill: 'hsl(215, 15%, 55%)' }} axisLine={false} />
               <YAxis tick={{ fontSize: 11, fill: 'hsl(215, 15%, 55%)' }} axisLine={false} />
@@ -145,7 +166,7 @@ export default function AutoAgingDashboard() {
         <div className="glass-panel p-5">
           <h3 className="text-sm font-semibold text-foreground mb-3">Data Quality</h3>
           <div className="space-y-2">
-            {qualityIssues.slice(0, 8).map(issue => (
+            {summary.qualityPreview.map(issue => (
               <div key={issue.id} className="p-2 rounded bg-secondary/50 border border-border/50">
                 <div className="flex items-center justify-between mb-1">
                   <span className="text-xs font-mono text-foreground">{issue.chassisNo.slice(0, 12)}</span>
@@ -154,9 +175,9 @@ export default function AutoAgingDashboard() {
                 <p className="text-[10px] text-muted-foreground">{issue.message}</p>
               </div>
             ))}
-            {qualityIssues.length > 8 && (
+            {summary.totalIssues > 8 && (
               <button onClick={() => navigate('/auto-aging/quality')} className="w-full text-xs text-primary hover:underline py-2">
-                View all {qualityIssues.length} issues →
+                View all {summary.totalIssues} issues →
               </button>
             )}
           </div>
@@ -165,12 +186,12 @@ export default function AutoAgingDashboard() {
 
       {/* Trend + Payment Charts */}
       <div className="grid md:grid-cols-2 gap-4">
-        <AgingTrendChart vehicles={filtered} />
-        <PaymentPieChart vehicles={filtered} />
+        <AgingTrendChart data={summary.trend} />
+        <PaymentPieChart data={summary.paymentDistribution} />
       </div>
 
       {/* Outlier Scatter */}
-      <OutlierScatterChart vehicles={filtered} onVehicleClick={(chassis) => navigate(`/auto-aging/vehicles/${chassis}`)} />
+      <OutlierScatterChart data={summary.outliers} onVehicleClick={(chassis) => navigate(`/auto-aging/vehicles/${chassis}`)} />
 
       {/* Slowest Vehicles Preview */}
       <div className="glass-panel p-5">
@@ -191,11 +212,7 @@ export default function AutoAgingDashboard() {
               </tr>
             </thead>
             <tbody>
-              {filtered
-                .filter(v => v.bg_to_delivery != null && v.bg_to_delivery >= 0)
-                .sort((a, b) => (b.bg_to_delivery ?? 0) - (a.bg_to_delivery ?? 0))
-                .slice(0, 10)
-                .map(v => (
+              {summary.slowestVehicles.map(v => (
                   <tr key={v.id} className="data-table-row cursor-pointer" onClick={() => navigate(`/auto-aging/vehicles/${v.chassis_no}`)}>
                     <td className="px-3 py-2 font-mono text-xs text-foreground">{v.chassis_no}</td>
                     <td className="px-3 py-2 text-foreground">{v.branch_code}</td>

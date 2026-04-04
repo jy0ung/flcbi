@@ -1,0 +1,15 @@
+name: flcbi_warehouse
+version: 0.1.0
+config-version: 2
+
+profile: flcbi
+
+model-paths:
+  - models
+
+models:
+  flcbi_warehouse:
+    staging:
+      +materialized: view
+    marts:
+      +materialized: table

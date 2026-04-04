@@ -7,32 +7,26 @@ import {
   Map, History, Grid3X3, UserCircle
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { useNavigationItems } from '@/hooks/api/use-platform';
+import { navigationItems, type NavigationItem } from '@flcbi/contracts';
 
-interface NavItem {
-  label: string;
-  path: string;
-  icon: React.ElementType;
-  section?: string;
-  roles?: string[];
-}
-
-const navItems: NavItem[] = [
-  { label: 'Executive Dashboard', path: '/', icon: LayoutDashboard, section: 'Platform' },
-  { label: 'Module Directory', path: '/modules', icon: Grid3X3, section: 'Platform' },
-  { label: 'Notifications', path: '/notifications', icon: Bell, section: 'Platform' },
-
-  { label: 'Aging Dashboard', path: '/auto-aging', icon: Timer, section: 'Auto Aging' },
-  { label: 'Vehicle Explorer', path: '/auto-aging/vehicles', icon: Car, section: 'Auto Aging' },
-  { label: 'Import Center', path: '/auto-aging/import', icon: Upload, section: 'Auto Aging' },
-  { label: 'Data Quality', path: '/auto-aging/quality', icon: AlertTriangle, section: 'Auto Aging' },
-  { label: 'SLA Policies', path: '/auto-aging/sla', icon: Gauge, section: 'Auto Aging' },
-  { label: 'Mappings', path: '/auto-aging/mappings', icon: Map, section: 'Auto Aging' },
-  { label: 'Import History', path: '/auto-aging/history', icon: History, section: 'Auto Aging' },
-
-  { label: 'Users & Roles', path: '/admin/users', icon: Shield, section: 'Admin', roles: ['super_admin', 'company_admin'] },
-  { label: 'Audit Log', path: '/admin/audit', icon: FileText, section: 'Admin', roles: ['super_admin', 'company_admin', 'director'] },
-  { label: 'Settings', path: '/admin/settings', icon: Settings, section: 'Admin' },
-];
+const iconMap: Record<string, React.ElementType> = {
+  Timer,
+  LayoutDashboard,
+  Bell,
+  Search,
+  Settings,
+  Shield,
+  FileText,
+  Upload,
+  Car,
+  AlertTriangle,
+  Gauge,
+  Map,
+  History,
+  Grid3X3,
+  UserCircle,
+};
 
 interface AppSidebarProps {
   collapsed: boolean;
@@ -40,8 +34,14 @@ interface AppSidebarProps {
 }
 
 export function AppSidebar({ collapsed, setCollapsed }: AppSidebarProps) {
-  const { user, logout, hasRole } = useAuth();
+  const { user, logout, isAuthenticated } = useAuth();
   const location = useLocation();
+  const { data } = useNavigationItems(isAuthenticated);
+  const navItems: NavigationItem[] = data?.items ?? (
+    user
+      ? navigationItems.filter((item) => !item.roles || item.roles.includes(user.role))
+      : []
+  );
 
   const sections = [...new Set(navItems.map(n => n.section))];
 
@@ -67,11 +67,7 @@ export function AppSidebar({ collapsed, setCollapsed }: AppSidebarProps) {
       <nav className="flex-1 overflow-y-auto py-3 px-2 space-y-4">
         {sections.map(section => {
           const items = navItems.filter(n => n.section === section);
-          const visibleItems = items.filter(item => {
-            if (!item.roles) return true;
-            return hasRole(item.roles as any);
-          });
-          if (visibleItems.length === 0) return null;
+          if (items.length === 0) return null;
 
           return (
             <div key={section}>
@@ -79,22 +75,25 @@ export function AppSidebar({ collapsed, setCollapsed }: AppSidebarProps) {
                 <p className="text-[10px] uppercase tracking-wider text-muted-foreground px-3 mb-1 font-medium">{section}</p>
               )}
               <div className="space-y-0.5">
-                {visibleItems.map(item => (
-                  <Link
-                    key={item.path}
-                    to={item.path}
-                    className={cn(
-                      "flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors",
-                      isActive(item.path)
-                        ? "nav-item-active"
-                        : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-                    )}
-                    title={collapsed ? item.label : undefined}
-                  >
-                    <item.icon className="h-4 w-4 flex-shrink-0" />
-                    {!collapsed && <span>{item.label}</span>}
-                  </Link>
-                ))}
+                {items.map(item => {
+                  const Icon = iconMap[item.icon] ?? LayoutDashboard;
+                  return (
+                    <Link
+                      key={item.path}
+                      to={item.path}
+                      className={cn(
+                        "flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors",
+                        isActive(item.path)
+                          ? "nav-item-active"
+                          : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+                      )}
+                      title={collapsed ? item.label : undefined}
+                    >
+                      <Icon className="h-4 w-4 flex-shrink-0" />
+                      {!collapsed && <span>{item.label}</span>}
+                    </Link>
+                  );
+                })}
               </div>
             </div>
           );

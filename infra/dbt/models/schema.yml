@@ -1,0 +1,26 @@
+version: 2
+
+sources:
+  - name: raw
+    tables:
+      - name: vehicle_import_rows
+
+models:
+  - name: stg_vehicle_imports
+    description: Raw vehicle import rows normalized into warehouse-friendly column names.
+    columns:
+      - name: chassis_no
+        tests:
+          - not_null
+      - name: import_batch_id
+        tests:
+          - not_null
+
+  - name: fct_vehicle_aging
+    description: Canonical mart for aging analytics and SLA reporting.
+    columns:
+      - name: chassis_no
+        tests:
+          - not_null
+      - name: bg_to_delivery
+        description: Number of days between BG date and delivery date.

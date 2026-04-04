@@ -1,0 +1,38 @@
+project_id = "flcbi"
+
+[api]
+enabled = true
+port = 55431
+schemas = ["public", "storage", "graphql_public", "app", "raw", "mart"]
+extra_search_path = ["public", "extensions", "app", "raw", "mart"]
+max_rows = 1000
+
+[db]
+port = 55432
+major_version = 17
+
+[studio]
+enabled = true
+port = 55433
+
+[inbucket]
+enabled = true
+port = 55434
+
+[analytics]
+enabled = false
+
+[storage]
+enabled = true
+file_size_limit = "50MiB"
+
+[auth]
+enabled = true
+site_url = "http://192.168.1.133:18133"
+additional_redirect_urls = ["http://192.168.1.133:18133", "http://localhost:18133"]
+enable_signup = false
+jwt_expiry = 3600
+
+[auth.hook.custom_access_token]
+enabled = true
+uri = "pg-functions://postgres/public/custom_access_token_hook"

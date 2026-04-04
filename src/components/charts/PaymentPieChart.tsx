@@ -1,9 +1,9 @@
-import React, { useMemo } from 'react';
+import React from 'react';
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend } from 'recharts';
-import { VehicleCanonical } from '@/types';
+import type { PaymentDistribution } from '@flcbi/contracts';
 
 interface Props {
-  vehicles: VehicleCanonical[];
+  data: PaymentDistribution[];
 }
 
 const COLORS = [
@@ -15,29 +15,9 @@ const COLORS = [
   'hsl(30, 90%, 55%)',
 ];
 
-export function PaymentPieChart({ vehicles }: Props) {
-  const { pieData, avgByMethod } = useMemo(() => {
-    const counts = new Map<string, { count: number; totalDays: number }>();
-    vehicles.forEach(v => {
-      const entry = counts.get(v.payment_method) || { count: 0, totalDays: 0 };
-      entry.count++;
-      if (v.bg_to_delivery != null && v.bg_to_delivery >= 0) entry.totalDays += v.bg_to_delivery;
-      counts.set(v.payment_method, entry);
-    });
-
-    const pieData = Array.from(counts.entries()).map(([name, d]) => ({
-      name,
-      value: d.count,
-    }));
-
-    const avgByMethod = Array.from(counts.entries()).map(([name, d]) => ({
-      name,
-      avg: d.count > 0 ? Math.round(d.totalDays / d.count) : 0,
-    }));
-
-    return { pieData, avgByMethod };
-  }, [vehicles]);
-
+export function PaymentPieChart({ data }: Props) {
+  const pieData = data.map(({ name, value }) => ({ name, value }));
+  const avgByMethod = data.map(({ name, avg }) => ({ name, avg }));
   return (
     <div className="glass-panel p-5">
       <h3 className="text-sm font-semibold text-foreground mb-4">Payment Method Distribution</h3>

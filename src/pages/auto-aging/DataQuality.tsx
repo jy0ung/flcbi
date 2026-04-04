@@ -1,10 +1,33 @@
 import React from 'react';
 import { PageHeader } from '@/components/shared/PageHeader';
+import { QueryErrorState } from '@/components/shared/QueryErrorState';
 import { StatusBadge } from '@/components/shared/StatusBadge';
-import { useData } from '@/contexts/DataContext';
+import { useQualityIssues } from '@/hooks/api/use-platform';
 
 export default function DataQuality() {
-  const { qualityIssues } = useData();
+  const { data, error, isError, isLoading, refetch } = useQualityIssues();
+  const qualityIssues = data?.items ?? [];
+
+  if (isLoading) {
+    return <div className="text-sm text-muted-foreground">Loading quality issues...</div>;
+  }
+
+  if (isError) {
+    return (
+      <div className="space-y-6 animate-fade-in">
+        <PageHeader
+          title="Data Quality"
+          description="Validation issues across current datasets"
+          breadcrumbs={[{ label: 'FLC BI' }, { label: 'Auto Aging' }, { label: 'Data Quality' }]}
+        />
+        <QueryErrorState
+          title="Could not load data quality issues"
+          error={error}
+          onRetry={() => void refetch()}
+        />
+      </div>
+    );
+  }
 
   const byType = qualityIssues.reduce((acc, i) => {
     acc[i.issueType] = (acc[i.issueType] || 0) + 1;
@@ -20,6 +43,11 @@ export default function DataQuality() {
       />
 
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+        {qualityIssues.length === 0 && (
+          <div className="glass-panel col-span-full p-6 text-sm text-muted-foreground">
+            No data quality issues detected yet.
+          </div>
+        )}
         {Object.entries(byType).map(([type, count]) => (
           <div key={type} className="kpi-card text-center">
             <StatusBadge status={type} />
@@ -40,6 +68,13 @@ export default function DataQuality() {
             </tr>
           </thead>
           <tbody>
+            {qualityIssues.length === 0 && (
+              <tr>
+                <td colSpan={5} className="px-4 py-10 text-center text-sm text-muted-foreground">
+                  Import a workbook to start capturing validation issues.
+                </td>
+              </tr>
+            )}
             {qualityIssues.map(issue => (
               <tr key={issue.id} className="data-table-row">
                 <td className="px-4 py-3 font-mono text-xs text-primary">{issue.chassisNo}</td>

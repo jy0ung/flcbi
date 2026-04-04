@@ -1,10 +1,14 @@
 {
   "compilerOptions": {
     "allowJs": true,
+    "baseUrl": ".",
     "noImplicitAny": false,
     "noUnusedLocals": false,
     "noUnusedParameters": false,
     "paths": {
+      "@flcbi/contracts": [
+        "./packages/contracts/src/index.ts"
+      ],
       "@/*": [
         "./src/*"
       ]

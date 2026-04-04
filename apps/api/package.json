@@ -1,0 +1,32 @@
+{
+  "name": "@flcbi/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/main.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/main.js",
+    "bootstrap:supabase": "tsx src/supabase/bootstrap-instance.ts"
+  },
+  "dependencies": {
+    "@flcbi/contracts": "file:../../packages/contracts",
+    "@nestjs/common": "^11.0.1",
+    "@nestjs/core": "^11.0.1",
+    "@nestjs/platform-express": "^11.0.1",
+    "@nestjs/swagger": "^11.0.1",
+    "@supabase/supabase-js": "^2.56.1",
+    "class-transformer": "^0.5.1",
+    "class-validator": "^0.14.2",
+    "multer": "^2.0.2",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.2",
+    "swagger-ui-express": "^5.0.1",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.3",
+    "@types/multer": "^2.0.0",
+    "tsx": "^4.20.3"
+  }
+}

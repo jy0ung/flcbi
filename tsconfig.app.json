@@ -1,6 +1,7 @@
 {
   "compilerOptions": {
     "allowImportingTsExtensions": true,
+    "baseUrl": ".",
     "isolatedModules": true,
     "jsx": "react-jsx",
     "lib": [
@@ -17,6 +18,9 @@
     "noUnusedLocals": false,
     "noUnusedParameters": false,
     "paths": {
+      "@flcbi/contracts": [
+        "./packages/contracts/src/index.ts"
+      ],
       "@/*": [
         "./src/*"
       ]

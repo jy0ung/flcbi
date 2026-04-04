@@ -1,18 +1,37 @@
 import React from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { PageHeader } from '@/components/shared/PageHeader';
+import { QueryErrorState } from '@/components/shared/QueryErrorState';
 import { StatusBadge } from '@/components/shared/StatusBadge';
-import { useData } from '@/contexts/DataContext';
 import { Button } from '@/components/ui/button';
 import { ArrowLeft, CheckCircle, Clock, AlertTriangle } from 'lucide-react';
 import { KPI_DEFINITIONS } from '@/data/kpi-definitions';
+import { useVehicleDetail } from '@/hooks/api/use-platform';
 
 export default function VehicleDetail() {
   const { chassisNo } = useParams<{ chassisNo: string }>();
-  const { vehicles, qualityIssues } = useData();
   const navigate = useNavigate();
+  const { data, error, isError, isLoading, refetch } = useVehicleDetail(chassisNo);
+  const vehicle = data?.vehicle;
+  const issues = data?.issues ?? [];
 
-  const vehicle = vehicles.find(v => v.chassis_no === chassisNo);
+  if (isLoading) {
+    return <div className="text-sm text-muted-foreground">Loading vehicle detail...</div>;
+  }
+
+  if (isError) {
+    return (
+      <div className="space-y-4 animate-fade-in">
+        <PageHeader title="Vehicle Detail" />
+        <QueryErrorState
+          title="Could not load vehicle detail"
+          error={error}
+          onRetry={() => void refetch()}
+        />
+      </div>
+    );
+  }
+
   if (!vehicle) {
     return (
       <div className="space-y-4 animate-fade-in">
@@ -21,8 +40,6 @@ export default function VehicleDetail() {
       </div>
     );
   }
-
-  const issues = qualityIssues.filter(q => q.chassisNo === chassisNo);
 
   const milestones = [
     { label: 'BG Date', date: vehicle.bg_date },

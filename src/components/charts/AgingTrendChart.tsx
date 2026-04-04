@@ -1,42 +1,17 @@
-import React, { useMemo } from 'react';
+import React from 'react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
-import { VehicleCanonical } from '@/types';
+import type { TrendPoint } from '@flcbi/contracts';
 
 interface Props {
-  vehicles: VehicleCanonical[];
+  data: TrendPoint[];
 }
 
-export function AgingTrendChart({ vehicles }: Props) {
-  const trendData = useMemo(() => {
-    const monthMap = new Map<string, { bgToDel: number[]; etdToEta: number[]; outletToDel: number[] }>();
-
-    vehicles.forEach(v => {
-      if (!v.bg_date) return;
-      const month = v.bg_date.slice(0, 7);
-      const entry = monthMap.get(month) || { bgToDel: [], etdToEta: [], outletToDel: [] };
-      if (v.bg_to_delivery != null && v.bg_to_delivery >= 0) entry.bgToDel.push(v.bg_to_delivery);
-      if (v.etd_to_eta != null && v.etd_to_eta >= 0) entry.etdToEta.push(v.etd_to_eta);
-      if (v.outlet_received_to_delivery != null && v.outlet_received_to_delivery >= 0) entry.outletToDel.push(v.outlet_received_to_delivery);
-      monthMap.set(month, entry);
-    });
-
-    const avg = (arr: number[]) => arr.length ? Math.round(arr.reduce((s, v) => s + v, 0) / arr.length) : 0;
-
-    return Array.from(monthMap.entries())
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([month, d]) => ({
-        month,
-        'BG→Delivery': avg(d.bgToDel),
-        'ETD→ETA': avg(d.etdToEta),
-        'Outlet→Delivery': avg(d.outletToDel),
-      }));
-  }, [vehicles]);
-
+export function AgingTrendChart({ data }: Props) {
   return (
     <div className="glass-panel p-5">
       <h3 className="text-sm font-semibold text-foreground mb-4">Aging Trend Over Time</h3>
       <ResponsiveContainer width="100%" height={280}>
-        <LineChart data={trendData} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
+        <LineChart data={data} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
           <XAxis dataKey="month" tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }} axisLine={false} />
           <YAxis tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }} axisLine={false} unit="d" />
