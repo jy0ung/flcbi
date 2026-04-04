@@ -8,15 +8,15 @@ interface Props {
 
 export function AgingTrendChart({ vehicles }: Props) {
   const trendData = useMemo(() => {
-    const monthMap = new Map<string, { bgToDel: number[]; etdToEta: number[]; outletToDel: number[] }>();
+    const monthMap = new Map<string, { bgToDel: number[]; etdToOut: number[]; regToDel: number[] }>();
 
     vehicles.forEach(v => {
       if (!v.bg_date) return;
       const month = v.bg_date.slice(0, 7);
-      const entry = monthMap.get(month) || { bgToDel: [], etdToEta: [], outletToDel: [] };
+      const entry = monthMap.get(month) || { bgToDel: [], etdToOut: [], regToDel: [] };
       if (v.bg_to_delivery != null && v.bg_to_delivery >= 0) entry.bgToDel.push(v.bg_to_delivery);
-      if (v.etd_to_eta != null && v.etd_to_eta >= 0) entry.etdToEta.push(v.etd_to_eta);
-      if (v.outlet_received_to_delivery != null && v.outlet_received_to_delivery >= 0) entry.outletToDel.push(v.outlet_received_to_delivery);
+      if (v.etd_to_outlet != null && v.etd_to_outlet >= 0) entry.etdToOut.push(v.etd_to_outlet);
+      if (v.reg_to_delivery != null && v.reg_to_delivery >= 0) entry.regToDel.push(v.reg_to_delivery);
       monthMap.set(month, entry);
     });
 
@@ -27,8 +27,8 @@ export function AgingTrendChart({ vehicles }: Props) {
       .map(([month, d]) => ({
         month,
         'BG→Delivery': avg(d.bgToDel),
-        'ETD→ETA': avg(d.etdToEta),
-        'Outlet→Delivery': avg(d.outletToDel),
+        'ETD→Outlet': avg(d.etdToOut),
+        'Reg→Delivery': avg(d.regToDel),
       }));
   }, [vehicles]);
 
@@ -51,8 +51,8 @@ export function AgingTrendChart({ vehicles }: Props) {
           />
           <Legend wrapperStyle={{ fontSize: '11px' }} />
           <Line type="monotone" dataKey="BG→Delivery" stroke="hsl(var(--primary))" strokeWidth={2} dot={{ r: 3 }} activeDot={{ r: 5 }} />
-          <Line type="monotone" dataKey="ETD→ETA" stroke="hsl(199, 89%, 48%)" strokeWidth={2} dot={{ r: 3 }} />
-          <Line type="monotone" dataKey="Outlet→Delivery" stroke="hsl(142, 71%, 45%)" strokeWidth={2} dot={{ r: 3 }} />
+          <Line type="monotone" dataKey="ETD→Outlet" stroke="hsl(199, 89%, 48%)" strokeWidth={2} dot={{ r: 3 }} />
+          <Line type="monotone" dataKey="Reg→Delivery" stroke="hsl(142, 71%, 45%)" strokeWidth={2} dot={{ r: 3 }} />
         </LineChart>
       </ResponsiveContainer>
     </div>

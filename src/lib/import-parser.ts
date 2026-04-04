@@ -1,14 +1,6 @@
 import * as XLSX from 'xlsx';
 import { VehicleRaw, DataQualityIssue, VehicleCanonical } from '@/types';
 
-/**
- * Normalize an Excel header:
- * - convert to string
- * - trim leading/trailing spaces
- * - replace line breaks, tabs, and repeated whitespace with a single space
- * - preserve important symbols like "/" and "."
- * - compare case-insensitively (stored uppercase)
- */
 function normalizeHeader(raw: unknown): string {
   return String(raw ?? '')
     .trim()
@@ -17,12 +9,7 @@ function normalizeHeader(raw: unknown): string {
     .toUpperCase();
 }
 
-/**
- * Alias-based mapping from normalized Excel header → snake_case database column.
- * Multiple source aliases can map to the same canonical column.
- */
 const HEADER_ALIAS_MAP: Record<string, keyof VehicleRaw> = {
-  // Required columns
   'CHASSIS NO.': 'chassis_no',
   'CHASSIS NO': 'chassis_no',
   'BG DATE': 'bg_date',
@@ -30,6 +17,7 @@ const HEADER_ALIAS_MAP: Record<string, keyof VehicleRaw> = {
   'SHIPMENT ETA KK/TWU/SDK': 'shipment_eta_kk_twu_sdk',
   'SHIPMENT ETA': 'shipment_eta_kk_twu_sdk',
   'DATE RECEIVED BY OUTLET': 'date_received_by_outlet',
+  'REG DATE': 'reg_date',
   'DELIVERY DATE': 'delivery_date',
   'DISB. DATE': 'disb_date',
   'DISB DATE': 'disb_date',
@@ -46,7 +34,6 @@ const HEADER_ALIAS_MAP: Record<string, keyof VehicleRaw> = {
   'REMARKS': 'remark',
   'VAA DATE': 'vaa_date',
   'FULL PAYMENT DATE': 'full_payment_date',
-  'REG DATE': 'reg_date',
   // Optional columns
   'NO.': 'source_row_no',
   'VAR': 'variant',
@@ -63,13 +50,12 @@ const HEADER_ALIAS_MAP: Record<string, keyof VehicleRaw> = {
   'OBR': 'obr',
 };
 
-/** Required database columns for Auto Aging MVP */
 const REQUIRED_DB_COLUMNS: (keyof VehicleRaw)[] = [
   'chassis_no',
   'bg_date',
   'shipment_etd_pkg',
-  'shipment_eta_kk_twu_sdk',
   'date_received_by_outlet',
+  'reg_date',
   'delivery_date',
   'disb_date',
   'branch_code',
@@ -104,7 +90,6 @@ export function parseWorkbook(file: ArrayBuffer): { rows: VehicleRaw[]; issues: 
 
   if (jsonData.length === 0) return { rows: [], issues: [], missingColumns: ['No data found'] };
 
-  // Step 1: Read raw headers and normalize them
   const rawHeaders = Object.keys(jsonData[0]);
   const columnMapping: Record<string, keyof VehicleRaw> = {};
 
@@ -115,7 +100,6 @@ export function parseWorkbook(file: ArrayBuffer): { rows: VehicleRaw[]; issues: 
     }
   });
 
-  // Step 2: Validate required canonical columns after mapping
   const mappedDbColumns = new Set(Object.values(columnMapping));
   const missingColumns = REQUIRED_DB_COLUMNS.filter(rc => !mappedDbColumns.has(rc));
 
@@ -123,7 +107,6 @@ export function parseWorkbook(file: ArrayBuffer): { rows: VehicleRaw[]; issues: 
   const issues: DataQualityIssue[] = [];
   const batchId = `import-${Date.now()}`;
 
-  // Step 3: Map each row
   jsonData.forEach((row, idx) => {
     const vehicle: Partial<VehicleRaw> = { id: `raw-${idx}`, import_batch_id: batchId, row_number: idx + 1 };
 
@@ -144,7 +127,6 @@ export function parseWorkbook(file: ArrayBuffer): { rows: VehicleRaw[]; issues: 
     rows.push(vehicle as VehicleRaw);
   });
 
-  // Step 4: Detect duplicates
   const chassisCount = new Map<string, number>();
   rows.forEach(r => { if (r.chassis_no) chassisCount.set(r.chassis_no, (chassisCount.get(r.chassis_no) || 0) + 1); });
   chassisCount.forEach((count, chassis) => {
@@ -183,6 +165,7 @@ export function publishCanonical(rows: VehicleRaw[]): { canonical: VehicleCanoni
       shipment_etd_pkg: best.shipment_etd_pkg,
       shipment_eta_kk_twu_sdk: best.shipment_eta_kk_twu_sdk,
       date_received_by_outlet: best.date_received_by_outlet,
+      reg_date: best.reg_date,
       delivery_date: best.delivery_date,
       disb_date: best.disb_date,
       branch_code: best.branch_code || 'Unknown',
@@ -193,7 +176,6 @@ export function publishCanonical(rows: VehicleRaw[]): { canonical: VehicleCanoni
       remark: best.remark,
       vaa_date: best.vaa_date,
       full_payment_date: best.full_payment_date,
-      reg_date: best.reg_date,
       is_d2d: best.is_d2d || false,
       import_batch_id: best.import_batch_id,
       source_row_id: best.id,
@@ -206,18 +188,19 @@ export function publishCanonical(rows: VehicleRaw[]): { canonical: VehicleCanoni
       reg_no: best.reg_no,
       invoice_no: best.invoice_no,
       obr: best.obr,
+      // New flow: BG → ETD → Outlet → Reg → Delivery → Disb
       bg_to_delivery: diffDays(best.bg_date, best.delivery_date),
       bg_to_shipment_etd: diffDays(best.bg_date, best.shipment_etd_pkg),
-      etd_to_eta: diffDays(best.shipment_etd_pkg, best.shipment_eta_kk_twu_sdk),
-      eta_to_outlet_received: diffDays(best.shipment_eta_kk_twu_sdk, best.date_received_by_outlet),
-      outlet_received_to_delivery: diffDays(best.date_received_by_outlet, best.delivery_date),
+      etd_to_outlet: diffDays(best.shipment_etd_pkg, best.date_received_by_outlet),
+      outlet_to_reg: diffDays(best.date_received_by_outlet, best.reg_date),
+      reg_to_delivery: diffDays(best.reg_date, best.delivery_date),
       bg_to_disb: diffDays(best.bg_date, best.disb_date),
       delivery_to_disb: diffDays(best.delivery_date, best.disb_date),
     };
 
     const kpiFields = [
-      ['bg_to_delivery', 'BG→Delivery'], ['bg_to_shipment_etd', 'BG→ETD'], ['etd_to_eta', 'ETD→ETA'],
-      ['eta_to_outlet_received', 'ETA→Outlet'], ['outlet_received_to_delivery', 'Outlet→Delivery'],
+      ['bg_to_delivery', 'BG→Delivery'], ['bg_to_shipment_etd', 'BG→ETD'], ['etd_to_outlet', 'ETD→Outlet'],
+      ['outlet_to_reg', 'Outlet→Reg'], ['reg_to_delivery', 'Reg→Delivery'],
       ['bg_to_disb', 'BG→Disb'], ['delivery_to_disb', 'Delivery→Disb'],
     ] as const;
 

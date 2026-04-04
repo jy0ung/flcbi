@@ -43,6 +43,16 @@ export default function VehicleExplorer() {
     </th>
   );
 
+  const kpiColumns = [
+    { field: 'bg_to_delivery', label: 'BG→Del' },
+    { field: 'bg_to_shipment_etd', label: 'BG→ETD' },
+    { field: 'etd_to_outlet', label: 'ETD→Out' },
+    { field: 'outlet_to_reg', label: 'Out→Reg' },
+    { field: 'reg_to_delivery', label: 'Reg→Del' },
+    { field: 'bg_to_disb', label: 'BG→Disb' },
+    { field: 'delivery_to_disb', label: 'Del→Disb' },
+  ] as const;
+
   return (
     <div className="space-y-4 animate-fade-in">
       <PageHeader
@@ -52,7 +62,6 @@ export default function VehicleExplorer() {
         actions={<Button variant="outline" size="sm"><Download className="h-3.5 w-3.5 mr-1" />Export CSV</Button>}
       />
 
-      {/* Filters */}
       <div className="glass-panel p-4 flex flex-wrap items-center gap-3">
         <div className="relative">
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
@@ -72,7 +81,6 @@ export default function VehicleExplorer() {
         </select>
       </div>
 
-      {/* Table */}
       <div className="glass-panel overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
@@ -82,13 +90,7 @@ export default function VehicleExplorer() {
                 <th className="px-3 py-2 text-xs text-muted-foreground font-medium">Branch</th>
                 <th className="px-3 py-2 text-xs text-muted-foreground font-medium">Model</th>
                 <th className="px-3 py-2 text-xs text-muted-foreground font-medium">Customer</th>
-                <SortHeader field="bg_to_delivery" label="BG→Del" />
-                <SortHeader field="bg_to_shipment_etd" label="BG→ETD" />
-                <SortHeader field="etd_to_eta" label="ETD→ETA" />
-                <SortHeader field="eta_to_outlet_received" label="ETA→Out" />
-                <SortHeader field="outlet_received_to_delivery" label="Out→Del" />
-                <SortHeader field="bg_to_disb" label="BG→Disb" />
-                <SortHeader field="delivery_to_disb" label="Del→Disb" />
+                {kpiColumns.map(c => <SortHeader key={c.field} field={c.field} label={c.label} />)}
                 <th className="px-3 py-2 text-xs text-muted-foreground font-medium">D2D</th>
               </tr>
             </thead>
@@ -99,10 +101,10 @@ export default function VehicleExplorer() {
                   <td className="px-3 py-2 text-foreground">{v.branch_code}</td>
                   <td className="px-3 py-2 text-foreground">{v.model}</td>
                   <td className="px-3 py-2 text-foreground truncate max-w-[120px]">{v.customer_name}</td>
-                  {(['bg_to_delivery', 'bg_to_shipment_etd', 'etd_to_eta', 'eta_to_outlet_received', 'outlet_received_to_delivery', 'bg_to_disb', 'delivery_to_disb'] as const).map(f => {
-                    const val = v[f];
+                  {kpiColumns.map(c => {
+                    const val = v[c.field as keyof typeof v] as number | null | undefined;
                     return (
-                      <td key={f} className="px-3 py-2 tabular-nums">
+                      <td key={c.field} className="px-3 py-2 tabular-nums">
                         {val != null ? <span className={val < 0 ? 'text-destructive' : val > 45 ? 'text-warning' : 'text-foreground'}>{val}</span> : <span className="text-muted-foreground">—</span>}
                       </td>
                     );

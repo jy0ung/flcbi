@@ -20,12 +20,21 @@ interface DataContextType {
 const DataContext = createContext<DataContextType | null>(null);
 
 export function DataProvider({ children }: { children: React.ReactNode }) {
-  const [vehicles, setVehicles] = useState<VehicleCanonical[]>(demoVehicles);
+  const [vehicles, setVehiclesState] = useState<VehicleCanonical[]>(demoVehicles);
   const [importBatches, setImportBatches] = useState<ImportBatch[]>(demoImportBatches);
   const [qualityIssues, setQualityIssues] = useState<DataQualityIssue[]>(demoQualityIssues);
   const [slas, setSlas] = useState<SlaPolicy[]>(demoSLAs);
   const [kpiSummaries, setKpiSummaries] = useState<KpiSummary[]>(() => computeKpiSummaries(demoVehicles, demoSLAs));
   const [lastRefresh, setLastRefresh] = useState(new Date().toISOString());
+
+  const setVehicles = useCallback((v: VehicleCanonical[]) => {
+    setVehiclesState(v);
+    setSlas(prev => {
+      setKpiSummaries(computeKpiSummaries(v, prev));
+      return prev;
+    });
+    setLastRefresh(new Date().toISOString());
+  }, []);
 
   const addImportBatch = useCallback((b: ImportBatch) => setImportBatches(prev => [b, ...prev]), []);
   const updateImportBatch = useCallback((id: string, updates: Partial<ImportBatch>) => {
@@ -35,7 +44,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
   const updateSla = useCallback((id: string, slaDays: number) => {
     setSlas(prev => {
       const updated = prev.map(s => s.id === id ? { ...s, slaDays } : s);
-      setKpiSummaries(computeKpiSummaries(vehicles, updated));
+      setKpiSummaries(prev2 => computeKpiSummaries(vehicles, updated));
       return updated;
     });
   }, [vehicles]);

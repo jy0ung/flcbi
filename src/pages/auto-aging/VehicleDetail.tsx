@@ -27,8 +27,8 @@ export default function VehicleDetail() {
   const milestones = [
     { label: 'BG Date', date: vehicle.bg_date },
     { label: 'Shipment ETD', date: vehicle.shipment_etd_pkg },
-    { label: 'Shipment ETA', date: vehicle.shipment_eta_kk_twu_sdk },
     { label: 'Outlet Received', date: vehicle.date_received_by_outlet },
+    { label: 'Registration', date: vehicle.reg_date },
     { label: 'Delivery', date: vehicle.delivery_date },
     { label: 'Disbursement', date: vehicle.disb_date },
   ];
@@ -48,7 +48,6 @@ export default function VehicleDetail() {
         actions={<Button variant="outline" size="sm" onClick={() => navigate(-1)}><ArrowLeft className="h-3.5 w-3.5 mr-1" />Back</Button>}
       />
 
-      {/* Vehicle Info */}
       <div className="grid md:grid-cols-2 gap-4">
         <div className="glass-panel p-5">
           <h3 className="text-sm font-semibold text-foreground mb-4">Vehicle Information</h3>
@@ -71,7 +70,6 @@ export default function VehicleDetail() {
           </div>
         </div>
 
-        {/* Timeline */}
         <div className="glass-panel p-5">
           <h3 className="text-sm font-semibold text-foreground mb-4">Milestone Timeline</h3>
           <div className="space-y-3">
@@ -93,7 +91,6 @@ export default function VehicleDetail() {
         </div>
       </div>
 
-      {/* KPI Cards */}
       <div className="glass-panel p-5">
         <h3 className="text-sm font-semibold text-foreground mb-4">KPI Breakdown</h3>
         <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-3">
@@ -113,7 +110,6 @@ export default function VehicleDetail() {
         </div>
       </div>
 
-      {/* Issues */}
       {issues.length > 0 && (
         <div className="glass-panel p-5">
           <h3 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2">

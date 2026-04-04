@@ -1,107 +1,28 @@
 import { VehicleCanonical, ImportBatch, DataQualityIssue, Notification, AuditLog, Branch, Company, User, SlaPolicy, PlatformModule } from '@/types';
 import { KPI_DEFINITIONS } from './kpi-definitions';
 
-const branches = ['KK', 'TWU', 'SDK', 'LDU', 'BTU', 'MYY', 'SBW'];
-const models = ['ATIVA', 'MYVI', 'AXIA', 'ALZA', 'ARUZ', 'BEZZA', 'VIVA'];
-const payments = ['Cash', 'Loan', 'Government'];
-const salesmen = ['Ahmad Razali', 'Siti Aminah', 'James Wong', 'Kumar Raj', 'Lisa Tan', 'Ali Hassan'];
-
-function randDate(start: string, addDays: number): string {
-  const d = new Date(start);
-  d.setDate(d.getDate() + addDays);
-  return d.toISOString().split('T')[0];
-}
-function rand(min: number, max: number) { return Math.floor(Math.random() * (max - min + 1)) + min; }
-function pick<T>(arr: T[]): T { return arr[rand(0, arr.length - 1)]; }
-
-function generateVehicles(count: number): VehicleCanonical[] {
-  const vehicles: VehicleCanonical[] = [];
-  for (let i = 0; i < count; i++) {
-    const bgBase = `2024-${String(rand(1, 12)).padStart(2, '0')}-${String(rand(1, 28)).padStart(2, '0')}`;
-    const bgToEtd = rand(3, 20);
-    const etdToEta = rand(5, 30);
-    const etaToOutlet = rand(1, 10);
-    const outletToDelivery = rand(1, 20);
-    const deliveryToDisb = rand(-5, 20);
-    const isD2D = Math.random() < 0.1;
-    const hasMissing = Math.random() < 0.08;
-
-    const bg = bgBase;
-    const etd = hasMissing && Math.random() < 0.5 ? undefined : randDate(bg, bgToEtd);
-    const eta = etd ? randDate(etd, etdToEta) : undefined;
-    const outlet = eta ? randDate(eta, etaToOutlet) : undefined;
-    const delivery = outlet ? randDate(outlet, outletToDelivery) : (hasMissing ? undefined : randDate(bg, bgToEtd + etdToEta + etaToOutlet + outletToDelivery));
-    const disb = delivery ? randDate(delivery, deliveryToDisb) : undefined;
-
-    const diffDays = (a?: string, b?: string) => {
-      if (!a || !b) return null;
-      return Math.round((new Date(b).getTime() - new Date(a).getTime()) / 86400000);
-    };
-
-    vehicles.push({
-      id: `v-${i + 1}`,
-      chassis_no: `PMK${String(rand(100000, 999999))}${String.fromCharCode(65 + rand(0, 25))}`,
-      bg_date: bg,
-      shipment_etd_pkg: etd,
-      shipment_eta_kk_twu_sdk: eta,
-      date_received_by_outlet: outlet,
-      delivery_date: delivery,
-      disb_date: disb,
-      branch_code: pick(branches),
-      model: pick(models),
-      payment_method: pick(payments),
-      salesman_name: pick(salesmen),
-      customer_name: `Customer ${i + 1}`,
-      is_d2d: isD2D,
-      import_batch_id: 'batch-1',
-      source_row_id: `raw-${i + 1}`,
-      bg_to_delivery: diffDays(bg, delivery),
-      bg_to_shipment_etd: diffDays(bg, etd),
-      etd_to_eta: diffDays(etd, eta),
-      eta_to_outlet_received: diffDays(eta, outlet),
-      outlet_received_to_delivery: diffDays(outlet, delivery),
-      bg_to_disb: diffDays(bg, disb),
-      delivery_to_disb: diffDays(delivery, disb),
-    });
-  }
-  return vehicles;
-}
-
-export const demoVehicles = generateVehicles(250);
+export const demoVehicles: VehicleCanonical[] = [];
 
 export const demoCompany: Company = { id: 'c1', name: 'FLC Auto Group', code: 'FLC' };
 
+const branches = ['KK', 'TWU', 'SDK', 'LDU', 'BTU', 'MYY', 'SBW'];
 export const demoBranches: Branch[] = branches.map((b, i) => ({ id: `br-${i}`, name: b, code: b, companyId: 'c1' }));
 
 export const demoUser: User = {
   id: 'u1', email: 'director@flc.com', name: 'Sarah Chen', role: 'director', companyId: 'c1',
 };
 
-export const demoImportBatches: ImportBatch[] = [
-  { id: 'batch-1', fileName: 'FLC_Combined_Jan2024.xlsx', uploadedBy: 'Sarah Chen', uploadedAt: '2024-01-15T09:30:00Z', status: 'published', totalRows: 250, validRows: 230, errorRows: 12, duplicateRows: 8, publishedAt: '2024-01-15T09:35:00Z' },
-  { id: 'batch-2', fileName: 'FLC_Combined_Dec2023.xlsx', uploadedBy: 'James Wong', uploadedAt: '2023-12-20T14:00:00Z', status: 'published', totalRows: 180, validRows: 170, errorRows: 6, duplicateRows: 4, publishedAt: '2023-12-20T14:10:00Z' },
-];
+export const demoImportBatches: ImportBatch[] = [];
 
-export const demoQualityIssues: DataQualityIssue[] = [
-  { id: 'dq1', chassisNo: demoVehicles[0]?.chassis_no ?? '', field: 'shipment_etd_pkg', issueType: 'missing', message: 'Shipment ETD date is missing', severity: 'warning', importBatchId: 'batch-1' },
-  { id: 'dq2', chassisNo: demoVehicles[1]?.chassis_no ?? '', field: 'delivery_to_disb', issueType: 'negative', message: 'Disbursement before delivery (-3 days)', severity: 'error', importBatchId: 'batch-1' },
-  { id: 'dq3', chassisNo: demoVehicles[2]?.chassis_no ?? '', field: 'delivery_date', issueType: 'missing', message: 'Delivery date is missing', severity: 'warning', importBatchId: 'batch-1' },
-];
+export const demoQualityIssues: DataQualityIssue[] = [];
 
 export const demoSLAs: SlaPolicy[] = KPI_DEFINITIONS.map(k => ({
   id: `sla-${k.id}`, kpiId: k.id, label: k.shortLabel, slaDays: k.slaDefault, companyId: 'c1',
 }));
 
-export const demoNotifications: Notification[] = [
-  { id: 'n1', title: 'Import Complete', message: 'FLC_Combined_Jan2024.xlsx has been published successfully.', type: 'success', read: false, createdAt: '2024-01-15T09:35:00Z', userId: 'u1' },
-  { id: 'n2', title: 'SLA Breach Alert', message: '12 vehicles exceeded BG→Delivery SLA of 45 days.', type: 'warning', read: false, createdAt: '2024-01-15T10:00:00Z', userId: 'u1' },
-  { id: 'n3', title: 'Data Quality Warning', message: '8 vehicles have missing date fields.', type: 'warning', read: true, createdAt: '2024-01-14T16:00:00Z', userId: 'u1' },
-];
+export const demoNotifications: Notification[] = [];
 
-export const demoAuditLogs: AuditLog[] = [
-  { id: 'a1', action: 'import_published', entity: 'import_batch', entityId: 'batch-1', userId: 'u1', userName: 'Sarah Chen', details: 'Published 250 vehicles from FLC_Combined_Jan2024.xlsx', createdAt: '2024-01-15T09:35:00Z' },
-  { id: 'a2', action: 'sla_updated', entity: 'sla_policy', entityId: 'sla-bg_to_delivery', userId: 'u1', userName: 'Sarah Chen', details: 'Updated BG→Delivery SLA from 60 to 45 days', createdAt: '2024-01-14T11:00:00Z' },
-];
+export const demoAuditLogs: AuditLog[] = [];
 
 export const platformModules: PlatformModule[] = [
   { id: 'auto-aging', name: 'Auto Aging', description: 'Vehicle aging analysis across operational milestones', icon: 'Timer', status: 'active', path: '/auto-aging' },

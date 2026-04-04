@@ -5,7 +5,7 @@ import { KpiCard } from '@/components/shared/KpiCard';
 import { StatusBadge } from '@/components/shared/StatusBadge';
 import { useData } from '@/contexts/DataContext';
 import { Button } from '@/components/ui/button';
-import { RefreshCw, Download, Filter } from 'lucide-react';
+import { RefreshCw, Download, Filter, Upload } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { AgingTrendChart } from '@/components/charts/AgingTrendChart';
 import { OutlierScatterChart } from '@/components/charts/OutlierScatterChart';
@@ -29,29 +29,52 @@ export default function AutoAgingDashboard() {
   const processStages = [
     { label: 'BG Date', short: 'BG' },
     { label: 'Shipment ETD', short: 'ETD' },
-    { label: 'Shipment ETA', short: 'ETA' },
     { label: 'Outlet Received', short: 'OUT' },
+    { label: 'Registration', short: 'REG' },
     { label: 'Delivery', short: 'DEL' },
     { label: 'Disbursement', short: 'DISB' },
   ];
 
+  // Map process flow KPIs (the segment KPIs between stages)
+  const segmentKpiIds = ['bg_to_shipment_etd', 'etd_to_outlet', 'outlet_to_reg', 'reg_to_delivery', 'delivery_to_disb'];
+
   const branchHeatmap = React.useMemo(() => {
-    const groups = new Map<string, { bgToDelivery: number[]; etdToEta: number[]; outletToDelivery: number[] }>();
+    const groups = new Map<string, { bgToDelivery: number[]; etdToOutlet: number[]; regToDelivery: number[] }>();
     filtered.forEach(v => {
-      const g = groups.get(v.branch_code) || { bgToDelivery: [], etdToEta: [], outletToDelivery: [] };
+      const g = groups.get(v.branch_code) || { bgToDelivery: [], etdToOutlet: [], regToDelivery: [] };
       if (v.bg_to_delivery != null && v.bg_to_delivery >= 0) g.bgToDelivery.push(v.bg_to_delivery);
-      if (v.etd_to_eta != null && v.etd_to_eta >= 0) g.etdToEta.push(v.etd_to_eta);
-      if (v.outlet_received_to_delivery != null && v.outlet_received_to_delivery >= 0) g.outletToDelivery.push(v.outlet_received_to_delivery);
+      if (v.etd_to_outlet != null && v.etd_to_outlet >= 0) g.etdToOutlet.push(v.etd_to_outlet);
+      if (v.reg_to_delivery != null && v.reg_to_delivery >= 0) g.regToDelivery.push(v.reg_to_delivery);
       groups.set(v.branch_code, g);
     });
 
     return Array.from(groups.entries()).map(([branch, g]) => ({
       branch,
       bgToDelivery: g.bgToDelivery.length ? Math.round(g.bgToDelivery.reduce((s, v) => s + v, 0) / g.bgToDelivery.length) : 0,
-      etdToEta: g.etdToEta.length ? Math.round(g.etdToEta.reduce((s, v) => s + v, 0) / g.etdToEta.length) : 0,
-      outletToDelivery: g.outletToDelivery.length ? Math.round(g.outletToDelivery.reduce((s, v) => s + v, 0) / g.outletToDelivery.length) : 0,
+      etdToOutlet: g.etdToOutlet.length ? Math.round(g.etdToOutlet.reduce((s, v) => s + v, 0) / g.etdToOutlet.length) : 0,
+      regToDelivery: g.regToDelivery.length ? Math.round(g.regToDelivery.reduce((s, v) => s + v, 0) / g.regToDelivery.length) : 0,
     })).sort((a, b) => b.bgToDelivery - a.bgToDelivery);
   }, [filtered]);
+
+  if (vehicles.length === 0) {
+    return (
+      <div className="space-y-6 animate-fade-in">
+        <PageHeader
+          title="Auto Aging Dashboard"
+          description="Vehicle aging analysis across operational milestones"
+          breadcrumbs={[{ label: 'FLC BI' }, { label: 'Auto Aging' }, { label: 'Dashboard' }]}
+        />
+        <div className="glass-panel p-12 text-center">
+          <Upload className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+          <h3 className="text-lg font-semibold text-foreground mb-2">No Data Imported Yet</h3>
+          <p className="text-sm text-muted-foreground mb-6">Upload your Excel workbook to start analyzing vehicle aging across milestones.</p>
+          <Button onClick={() => navigate('/auto-aging/import')} className="bg-primary text-primary-foreground">
+            <Upload className="h-4 w-4 mr-2" />Go to Import Center
+          </Button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -100,7 +123,10 @@ export default function AutoAgingDashboard() {
               {i < processStages.length - 1 && (
                 <div className="flex-1 h-0.5 bg-border min-w-[20px] relative">
                   <div className="absolute -top-3 left-1/2 -translate-x-1/2 text-[10px] text-primary font-medium whitespace-nowrap">
-                    {kpiSummaries[i]?.median ?? '—'}d
+                    {(() => {
+                      const segKpi = kpiSummaries.find(k => k.kpiId === segmentKpiIds[i]);
+                      return segKpi ? `${segKpi.median}d` : '—';
+                    })()}
                   </div>
                 </div>
               )}
@@ -131,13 +157,13 @@ export default function AutoAgingDashboard() {
           <h3 className="text-sm font-semibold text-foreground mb-4">Branch Comparison — Average Days</h3>
           <ResponsiveContainer width="100%" height={250}>
             <BarChart data={branchHeatmap} margin={{ top: 5, right: 10, bottom: 5, left: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="hsl(222, 20%, 15%)" />
-              <XAxis dataKey="branch" tick={{ fontSize: 11, fill: 'hsl(215, 15%, 55%)' }} axisLine={false} />
-              <YAxis tick={{ fontSize: 11, fill: 'hsl(215, 15%, 55%)' }} axisLine={false} />
-              <Tooltip contentStyle={{ background: 'hsl(222, 44%, 10%)', border: '1px solid hsl(222, 20%, 18%)', borderRadius: '6px', fontSize: '12px', color: 'hsl(210, 20%, 92%)' }} />
-              <Bar dataKey="bgToDelivery" name="BG→Delivery" fill="hsl(43, 96%, 56%)" radius={[3, 3, 0, 0]} />
-              <Bar dataKey="etdToEta" name="ETD→ETA" fill="hsl(199, 89%, 48%)" radius={[3, 3, 0, 0]} />
-              <Bar dataKey="outletToDelivery" name="Outlet→Delivery" fill="hsl(142, 71%, 45%)" radius={[3, 3, 0, 0]} />
+              <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+              <XAxis dataKey="branch" tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }} axisLine={false} />
+              <YAxis tick={{ fontSize: 11, fill: 'hsl(var(--muted-foreground))' }} axisLine={false} />
+              <Tooltip contentStyle={{ background: 'hsl(var(--card))', border: '1px solid hsl(var(--border))', borderRadius: '6px', fontSize: '12px', color: 'hsl(var(--foreground))' }} />
+              <Bar dataKey="bgToDelivery" name="BG→Delivery" fill="hsl(var(--primary))" radius={[3, 3, 0, 0]} />
+              <Bar dataKey="etdToOutlet" name="ETD→Outlet" fill="hsl(199, 89%, 48%)" radius={[3, 3, 0, 0]} />
+              <Bar dataKey="regToDelivery" name="Reg→Delivery" fill="hsl(142, 71%, 45%)" radius={[3, 3, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
         </div>
@@ -145,6 +171,7 @@ export default function AutoAgingDashboard() {
         <div className="glass-panel p-5">
           <h3 className="text-sm font-semibold text-foreground mb-3">Data Quality</h3>
           <div className="space-y-2">
+            {qualityIssues.length === 0 && <p className="text-xs text-muted-foreground">No issues detected.</p>}
             {qualityIssues.slice(0, 8).map(issue => (
               <div key={issue.id} className="p-2 rounded bg-secondary/50 border border-border/50">
                 <div className="flex items-center justify-between mb-1">
@@ -186,7 +213,8 @@ export default function AutoAgingDashboard() {
                 <th className="px-3 py-2 text-xs text-muted-foreground font-medium">Branch</th>
                 <th className="px-3 py-2 text-xs text-muted-foreground font-medium">Model</th>
                 <th className="px-3 py-2 text-xs text-muted-foreground font-medium">BG→Del</th>
-                <th className="px-3 py-2 text-xs text-muted-foreground font-medium">ETD→ETA</th>
+                <th className="px-3 py-2 text-xs text-muted-foreground font-medium">ETD→Out</th>
+                <th className="px-3 py-2 text-xs text-muted-foreground font-medium">Reg→Del</th>
                 <th className="px-3 py-2 text-xs text-muted-foreground font-medium">Status</th>
               </tr>
             </thead>
@@ -201,7 +229,8 @@ export default function AutoAgingDashboard() {
                     <td className="px-3 py-2 text-foreground">{v.branch_code}</td>
                     <td className="px-3 py-2 text-foreground">{v.model}</td>
                     <td className="px-3 py-2"><span className={(v.bg_to_delivery ?? 0) > 45 ? 'text-destructive font-semibold' : 'text-foreground'}>{v.bg_to_delivery}d</span></td>
-                    <td className="px-3 py-2 text-foreground">{v.etd_to_eta != null ? `${v.etd_to_eta}d` : '—'}</td>
+                    <td className="px-3 py-2 text-foreground">{v.etd_to_outlet != null ? `${v.etd_to_outlet}d` : '—'}</td>
+                    <td className="px-3 py-2 text-foreground">{v.reg_to_delivery != null ? `${v.reg_to_delivery}d` : '—'}</td>
                     <td className="px-3 py-2"><StatusBadge status={(v.bg_to_delivery ?? 0) > 45 ? 'warning' : 'active'} /></td>
                   </tr>
                 ))}
