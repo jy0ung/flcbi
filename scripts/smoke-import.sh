@@ -31,8 +31,36 @@ WORKBOOK_PATH="$(mktemp --suffix=.xlsx)"
 AUTH_JSON="$(mktemp)"
 IMPORT_JSON="$(mktemp)"
 PUBLISH_JSON="$(mktemp)"
-SUMMARY_JSON="$(mktemp)"
-trap 'rm -f "${WORKBOOK_PATH}" "${AUTH_JSON}" "${IMPORT_JSON}" "${PUBLISH_JSON}" "${SUMMARY_JSON}"' EXIT
+QUERY_JSON="$(mktemp)"
+IMPORT_ID=""
+ACCESS_TOKEN=""
+
+cleanup() {
+  rm -f "${WORKBOOK_PATH}" "${AUTH_JSON}" "${IMPORT_JSON}" "${PUBLISH_JSON}" "${QUERY_JSON}"
+
+  if [[ -z "${IMPORT_ID}" || "${KEEP_DATA}" == "true" ]]; then
+    return
+  fi
+
+  docker exec "${SUPABASE_DB_CONTAINER}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c "
+    delete from app.vehicle_records where import_job_id = '${IMPORT_ID}';
+    delete from app.quality_issues where import_job_id = '${IMPORT_ID}';
+    delete from raw.vehicle_import_rows where import_job_id = '${IMPORT_ID}';
+    delete from app.dataset_versions where import_job_id = '${IMPORT_ID}';
+    delete from app.import_jobs where id = '${IMPORT_ID}';
+  " >/dev/null
+
+  if [[ -n "${PREVIOUS_IMPORT_ID}" && -n "${ACCESS_TOKEN}" ]]; then
+    curl -fsS -X POST "${API_URL}/imports/${PREVIOUS_IMPORT_ID}/publish" \
+      -H "Authorization: Bearer ${ACCESS_TOKEN}" \
+      -H "Content-Type: application/json" \
+      -d '{"mode":"replace"}' >/dev/null
+  fi
+
+  echo "Smoke import data cleaned up"
+}
+
+trap cleanup EXIT
 
 IMPORT_STAMP="$(date +%s)"
 
@@ -133,10 +161,12 @@ PY
 curl -sS -X POST "${API_URL}/imports/${IMPORT_ID}/publish" \
   -H "Authorization: Bearer ${ACCESS_TOKEN}" > "${PUBLISH_JSON}"
 
-curl -sS "${API_URL}/aging/summary" \
-  -H "Authorization: Bearer ${ACCESS_TOKEN}" > "${SUMMARY_JSON}"
+curl -fsS -X POST "${API_URL}/aging/explorer/query" \
+  -H "Authorization: Bearer ${ACCESS_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -d "{\"search\":\"SMOKE-${IMPORT_STAMP}\",\"branch\":\"all\",\"model\":\"all\",\"payment\":\"all\",\"page\":1,\"pageSize\":50,\"sortField\":\"bg_date\",\"sortDirection\":\"desc\"}" > "${QUERY_JSON}"
 
-python3 - "${IMPORT_JSON}" "${PUBLISH_JSON}" "${SUMMARY_JSON}" <<'PY'
+python3 - "${IMPORT_JSON}" "${PUBLISH_JSON}" "${QUERY_JSON}" <<'PY'
 import json
 import sys
 
@@ -145,32 +175,13 @@ with open(sys.argv[1], "r", encoding="utf-8") as handle:
 with open(sys.argv[2], "r", encoding="utf-8") as handle:
     published = json.load(handle)
 with open(sys.argv[3], "r", encoding="utf-8") as handle:
-    summary = json.load(handle)
+    explorer = json.load(handle)
 
 assert preview["item"]["status"] == "validated", preview
 assert published["item"]["status"] == "published", published
-assert summary["summary"]["totalVehicles"] >= 2, summary
+assert explorer["result"]["total"] == 2, explorer
 
 print("Smoke import succeeded")
 print(f"Import ID: {published['item']['id']}")
-print(f"Total vehicles after publish: {summary['summary']['totalVehicles']}")
+print(f"Imported smoke rows visible in explorer: {explorer['result']['total']}")
 PY
-
-if [[ "${KEEP_DATA}" != "true" ]]; then
-  docker exec "${SUPABASE_DB_CONTAINER}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c "
-    delete from app.vehicle_records where import_job_id = '${IMPORT_ID}';
-    delete from app.quality_issues where import_job_id = '${IMPORT_ID}';
-    delete from raw.vehicle_import_rows where import_job_id = '${IMPORT_ID}';
-    delete from app.dataset_versions where import_job_id = '${IMPORT_ID}';
-    delete from app.import_jobs where id = '${IMPORT_ID}';
-  " >/dev/null
-
-  if [[ -n "${PREVIOUS_IMPORT_ID}" ]]; then
-    curl -fsS -X POST "${API_URL}/imports/${PREVIOUS_IMPORT_ID}/publish" \
-      -H "Authorization: Bearer ${ACCESS_TOKEN}" \
-      -H "Content-Type: application/json" \
-      -d '{"mode":"replace"}' >/dev/null
-  fi
-
-  echo "Smoke import data cleaned up"
-fi

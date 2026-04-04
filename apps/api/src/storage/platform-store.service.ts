@@ -1,9 +1,12 @@
 import { BadRequestException, Inject, Injectable, NotFoundException } from "@nestjs/common";
 import {
   buildAgingSummary,
+  createDefaultDashboardPreferences,
   createDefaultSlaPolicies,
   getPermissionsForUser,
+  matchesExplorerPreset,
   navigationItems,
+  normalizeExecutiveDashboardMetricIds,
   platformModules,
   publishCanonical,
   queryVehicles,
@@ -11,8 +14,10 @@ import {
   type AgingSummary,
   type AlertRule,
   type AuditEvent,
+  type DashboardPreferences,
   type DataQualityIssue,
   type ExplorerQuery,
+  type ExplorerPreset,
   type ExplorerResult,
   type ImportBatch,
   type ImportPublishMode,
@@ -40,6 +45,7 @@ export class PlatformStoreService implements PlatformRepository {
   private readonly alerts: AlertRule[] = [];
   private readonly audits: AuditEvent[] = [];
   private readonly slasByCompany = new Map<string, SlaPolicy[]>();
+  private readonly dashboardPreferencesByUser = new Map<string, DashboardPreferences>();
   private readonly importPreviews = new Map<string, ImportPreview>();
   private vehicles: VehicleCanonical[] = [];
   private imports: ImportBatch[] = [];
@@ -195,6 +201,34 @@ export class PlatformStoreService implements PlatformRepository {
     return item;
   }
 
+  getDashboardPreferences(user: User) {
+    const existing = this.dashboardPreferencesByUser.get(user.id);
+    if (!existing) {
+      return createDefaultDashboardPreferences();
+    }
+
+    return {
+      executiveMetricIds: normalizeExecutiveDashboardMetricIds(existing.executiveMetricIds),
+    };
+  }
+
+  saveDashboardPreferences(user: User, preferences: DashboardPreferences) {
+    const normalized = {
+      executiveMetricIds: normalizeExecutiveDashboardMetricIds(preferences.executiveMetricIds),
+    };
+
+    this.dashboardPreferencesByUser.set(user.id, normalized);
+    this.addAuditEvent({
+      action: "dashboard_preferences_updated",
+      entity: "dashboard_preferences",
+      entityId: user.id,
+      userId: user.id,
+      userName: user.name,
+      details: `Saved ${normalized.executiveMetricIds.length} executive dashboard metrics`,
+    });
+    return normalized;
+  }
+
   listSlas(user: User) {
     return [...this.getCompanySlas(user.companyId)];
   }
@@ -218,10 +252,15 @@ export class PlatformStoreService implements PlatformRepository {
     return sla;
   }
 
-  getSummary(user: User, filters?: { branch?: string; model?: string }): AgingSummary {
+  getSummary(
+    user: User,
+    filters?: { branch?: string; model?: string; payment?: string; preset?: ExplorerPreset },
+  ): AgingSummary {
     const visibleVehicles = this.getVisibleVehicles(user).filter((vehicle) => {
       if (filters?.branch && filters.branch !== "all" && vehicle.branch_code !== filters.branch) return false;
       if (filters?.model && filters.model !== "all" && vehicle.model !== filters.model) return false;
+      if (filters?.payment && filters.payment !== "all" && vehicle.payment_method !== filters.payment) return false;
+      if (filters?.preset && !matchesExplorerPreset(vehicle, filters.preset)) return false;
       return true;
     });
     const visibleVehicleIds = new Set(visibleVehicles.map((vehicle) => vehicle.chassis_no));

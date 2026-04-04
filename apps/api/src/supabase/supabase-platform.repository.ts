@@ -8,14 +8,19 @@ import {
 } from "@nestjs/common";
 import {
   buildAgingSummary,
+  createDefaultDashboardPreferences,
+  matchesExplorerPreset,
   navigationItems,
+  normalizeExecutiveDashboardMetricIds,
   parseWorkbook,
   publishCanonical,
   queryVehicles,
   type AlertRule,
   type AuditEvent,
+  type DashboardPreferences,
   type DataQualityIssue,
   type ExplorerQuery,
+  type ExplorerPreset,
   type ExplorerResult,
   type ImportBatch,
   type ImportPublishMode,
@@ -158,6 +163,11 @@ interface RawImportRow {
   delivery_date: string | null;
   disb_date: string | null;
   raw_payload: VehicleRaw | null;
+}
+
+interface SavedViewRow {
+  id: string;
+  definition: { executiveMetricIds?: string[] } | null;
 }
 
 @Injectable()
@@ -644,6 +654,76 @@ export class SupabasePlatformRepository implements PlatformRepository {
     return item;
   }
 
+  async getDashboardPreferences(user: User): Promise<DashboardPreferences> {
+    if (!this.supabase.isConfigured()) {
+      return this.fallback.getDashboardPreferences(user);
+    }
+
+    const savedView = await this.fetchDashboardPreferencesRow(user);
+    return {
+      executiveMetricIds: normalizeExecutiveDashboardMetricIds(savedView?.definition?.executiveMetricIds),
+    };
+  }
+
+  async saveDashboardPreferences(
+    user: User,
+    preferences: DashboardPreferences,
+  ): Promise<DashboardPreferences> {
+    if (!this.supabase.isConfigured()) {
+      return this.fallback.saveDashboardPreferences(user, preferences);
+    }
+
+    const companyId = this.requireCompanyId(user);
+    const dbUserId = await this.resolveDbUserIdFromUser(user);
+    if (!dbUserId) {
+      return createDefaultDashboardPreferences();
+    }
+
+    const normalized = {
+      executiveMetricIds: normalizeExecutiveDashboardMetricIds(preferences.executiveMetricIds),
+    };
+    const client = this.supabase.getAdminClient();
+    const existing = await this.fetchDashboardPreferencesRow(user);
+
+    if (existing) {
+      const { error } = await client
+        .schema("app")
+        .from("saved_views")
+        .update({ definition: normalized })
+        .eq("id", existing.id);
+
+      if (error) {
+        throw new InternalServerErrorException(error.message);
+      }
+    } else {
+      const { error } = await client
+        .schema("app")
+        .from("saved_views")
+        .insert({
+          company_id: companyId,
+          created_by: dbUserId,
+          module: "executive_dashboard",
+          name: "metric_board",
+          definition: normalized,
+        });
+
+      if (error) {
+        throw new InternalServerErrorException(error.message);
+      }
+    }
+
+    await this.addAuditEvent({
+      action: "dashboard_preferences_updated",
+      entity: "dashboard_preferences",
+      entityId: dbUserId,
+      userId: user.id,
+      userName: user.name,
+      details: `Saved ${normalized.executiveMetricIds.length} executive dashboard metrics`,
+    });
+
+    return normalized;
+  }
+
   async listSlas(user: User): Promise<SlaPolicy[]> {
     if (!this.supabase.isConfigured()) {
       return this.fallback.listSlas(user);
@@ -711,12 +791,17 @@ export class SupabasePlatformRepository implements PlatformRepository {
     };
   }
 
-  async getSummary(user: User, filters?: { branch?: string; model?: string }) {
+  async getSummary(
+    user: User,
+    filters?: { branch?: string; model?: string; payment?: string; preset?: ExplorerPreset },
+  ) {
     if (!this.supabase.isConfigured()) {
       return this.fallback.getSummary(user, filters);
     }
 
-    const visibleVehicles = await this.fetchVisibleVehicles(user, filters);
+    const visibleVehicles = (await this.fetchVisibleVehicles(user, filters)).filter((vehicle) =>
+      filters?.preset ? matchesExplorerPreset(vehicle, filters.preset) : true,
+    );
     const visibleVehicleIds = new Set(visibleVehicles.map((vehicle) => vehicle.chassis_no));
     const visibleIssues = (await this.getQualityIssues(user))
       .filter((issue) => visibleVehicleIds.has(issue.chassisNo));
@@ -734,6 +819,7 @@ export class SupabasePlatformRepository implements PlatformRepository {
     const visibleVehicles = await this.fetchVisibleVehicles(user, {
       branch: query.branch,
       model: query.model,
+      payment: query.payment,
     });
     return queryVehicles(visibleVehicles, query);
   }
@@ -971,7 +1057,37 @@ export class SupabasePlatformRepository implements PlatformRepository {
     return ((data ?? []) as RawImportRow[]).map((row) => this.mapRawImportRow(row));
   }
 
-  private async fetchVisibleVehicles(user: User, filters?: { branch?: string; model?: string }) {
+  private async fetchDashboardPreferencesRow(user: User) {
+    const companyId = this.requireCompanyId(user);
+    const dbUserId = await this.resolveDbUserIdFromUser(user);
+    if (!dbUserId) {
+      return null;
+    }
+
+    const client = this.supabase.getAdminClient();
+    const { data, error } = await client
+      .schema("app")
+      .from("saved_views")
+      .select("id, definition")
+      .eq("company_id", companyId)
+      .eq("created_by", dbUserId)
+      .eq("module", "executive_dashboard")
+      .eq("name", "metric_board")
+      .order("updated_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (error) {
+      throw new InternalServerErrorException(error.message);
+    }
+
+    return (data as SavedViewRow | null) ?? null;
+  }
+
+  private async fetchVisibleVehicles(
+    user: User,
+    filters?: { branch?: string; model?: string; payment?: string; preset?: ExplorerPreset },
+  ) {
     const companyId = this.requireCompanyId(user);
     const client = this.supabase.getAdminClient();
     let query = client
@@ -989,6 +1105,9 @@ export class SupabasePlatformRepository implements PlatformRepository {
     }
     if (filters?.model && filters.model !== "all") {
       query = query.eq("model", filters.model);
+    }
+    if (filters?.payment && filters.payment !== "all") {
+      query = query.eq("payment_method", filters.payment);
     }
 
     const { data, error } = await query.order("bg_date", { ascending: false });

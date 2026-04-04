@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { ExplorerQueryRequest } from "@flcbi/contracts";
+import type { ExecutiveDashboardMetricId, ExplorerPreset, ExplorerQueryRequest } from "@flcbi/contracts";
 import { apiClient } from "@/lib/api-client";
 
 export function useNavigationItems(enabled = true) {
@@ -10,9 +10,19 @@ export function useNavigationItems(enabled = true) {
   });
 }
 
-export function useAgingSummary(filters?: { branch?: string; model?: string }, enabled = true) {
+export function useAgingSummary(
+  filters?: { branch?: string; model?: string; payment?: string; preset?: ExplorerPreset },
+  enabled = true,
+) {
   return useQuery({
-    queryKey: ["aging", "summary", filters?.branch ?? "all", filters?.model ?? "all"],
+    queryKey: [
+      "aging",
+      "summary",
+      filters?.branch ?? "all",
+      filters?.model ?? "all",
+      filters?.payment ?? "all",
+      filters?.preset ?? "all",
+    ],
     queryFn: () => apiClient.getAgingSummary(filters),
     enabled,
   });
@@ -126,6 +136,26 @@ export function useAuditEvents(enabled = true) {
     queryKey: ["audit"],
     queryFn: () => apiClient.getAuditEvents(),
     enabled,
+  });
+}
+
+export function useExecutiveDashboardPreferences(enabled = true) {
+  return useQuery({
+    queryKey: ["preferences", "executive-dashboard"],
+    queryFn: () => apiClient.getExecutiveDashboardPreferences(),
+    enabled,
+  });
+}
+
+export function useUpdateExecutiveDashboardPreferences() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (executiveMetricIds: ExecutiveDashboardMetricId[]) =>
+      apiClient.updateExecutiveDashboardPreferences(executiveMetricIds),
+    onSuccess: (response) => {
+      queryClient.setQueryData(["preferences", "executive-dashboard"], response);
+      void queryClient.invalidateQueries({ queryKey: ["preferences", "executive-dashboard"] });
+    },
   });
 }
 

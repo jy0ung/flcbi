@@ -21,6 +21,7 @@
     "test-server:supabase:stop": "bash scripts/test-server-supabase-stop.sh",
     "smoke:import": "bash scripts/smoke-import.sh",
     "smoke:publish-modes": "bash scripts/smoke-publish-modes.sh",
+    "smoke:dashboard": "node scripts/smoke-dashboard.mjs",
     "generate:import-template": "node scripts/generate-import-template.mjs",
     "bootstrap:supabase": "npm --workspace @flcbi/api run bootstrap:supabase",
     "build": "vite build",

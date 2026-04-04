@@ -315,6 +315,34 @@ export type ExplorerPreset =
   | "aged_90_plus"
   | "d2d_open";
 
+export type ExecutiveDashboardMetricId =
+  | "open_stock"
+  | "pending_shipment"
+  | "in_transit"
+  | "at_outlet"
+  | "registered_pending_delivery"
+  | "pending_disbursement"
+  | "disbursed"
+  | "tracked_units"
+  | "import_batches"
+  | "sla_breaches"
+  | "quality_issues"
+  | "aged_30_plus"
+  | "aged_60_plus"
+  | "aged_90_plus"
+  | "d2d_open"
+  | "bg_to_delivery_median"
+  | "bg_to_shipment_etd_median"
+  | "etd_to_outlet_median"
+  | "outlet_to_reg_median"
+  | "reg_to_delivery_median"
+  | "bg_to_disb_median"
+  | "delivery_to_disb_median";
+
+export interface DashboardPreferences {
+  executiveMetricIds: ExecutiveDashboardMetricId[];
+}
+
 export interface AgingSummary {
   totalVehicles: number;
   totalOverdue: number;

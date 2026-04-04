@@ -1,7 +1,9 @@
 import type {
   AgingSummary,
   BranchComparison,
+  DashboardPreferences,
   DataQualityIssue,
+  ExecutiveDashboardMetricId,
   ExplorerPreset,
   ExplorerQuery,
   ExplorerResult,
@@ -19,6 +21,51 @@ import type {
 } from "./domain.js";
 import { KPI_DEFINITIONS } from "./kpis.js";
 
+export const EXECUTIVE_DASHBOARD_METRIC_OPTIONS: Array<{
+  id: ExecutiveDashboardMetricId;
+  label: string;
+  description: string;
+  group: "pipeline" | "operations" | "risk" | "kpi";
+}> = [
+  { id: "open_stock", label: "Open Stock", description: "All units not yet delivered.", group: "pipeline" },
+  { id: "pending_shipment", label: "Pending Shipment", description: "Open units with no ETD yet.", group: "pipeline" },
+  { id: "in_transit", label: "In Transit", description: "Open units already shipped but not yet received by outlet.", group: "pipeline" },
+  { id: "at_outlet", label: "At Outlet", description: "Open units received by outlet but not yet registered.", group: "pipeline" },
+  { id: "registered_pending_delivery", label: "Registered Pending Delivery", description: "Open units already registered and waiting for delivery.", group: "pipeline" },
+  { id: "pending_disbursement", label: "Pending Disbursement", description: "Delivered units waiting for disbursement.", group: "pipeline" },
+  { id: "disbursed", label: "Disbursed", description: "Units already disbursed.", group: "pipeline" },
+  { id: "tracked_units", label: "Tracked Units", description: "All live canonical vehicles in the current dataset.", group: "operations" },
+  { id: "import_batches", label: "Import Batches", description: "Imports retained in history.", group: "operations" },
+  { id: "sla_breaches", label: "SLA Breaches", description: "Overdue KPI measurements across active metrics.", group: "operations" },
+  { id: "quality_issues", label: "Quality Issues", description: "Current data quality findings for the filtered scope.", group: "operations" },
+  { id: "aged_30_plus", label: "30+ Days Open", description: "Open units aged 30 days or more from BG date.", group: "risk" },
+  { id: "aged_60_plus", label: "60+ Days Open", description: "Open units aged 60 days or more from BG date.", group: "risk" },
+  { id: "aged_90_plus", label: "90+ Days Open", description: "Open units aged 90 days or more from BG date.", group: "risk" },
+  { id: "d2d_open", label: "Open D2D", description: "Open D2D or transfer units.", group: "risk" },
+  { id: "bg_to_delivery_median", label: "BG -> Delivery", description: "Median BG to delivery duration.", group: "kpi" },
+  { id: "bg_to_shipment_etd_median", label: "BG -> Shipment ETD", description: "Median BG to ETD duration.", group: "kpi" },
+  { id: "etd_to_outlet_median", label: "ETD -> Outlet Received", description: "Median ETD to outlet-received duration.", group: "kpi" },
+  { id: "outlet_to_reg_median", label: "Outlet -> Register Date", description: "Median outlet to register duration.", group: "kpi" },
+  { id: "reg_to_delivery_median", label: "Register Date -> Delivery", description: "Median register to delivery duration.", group: "kpi" },
+  { id: "bg_to_disb_median", label: "BG -> Disbursement", description: "Median BG to disbursement duration.", group: "kpi" },
+  { id: "delivery_to_disb_median", label: "Delivery -> Disbursement", description: "Median delivery to disbursement duration.", group: "kpi" },
+];
+
+export const EXECUTIVE_DASHBOARD_METRIC_IDS = EXECUTIVE_DASHBOARD_METRIC_OPTIONS.map(
+  (metric) => metric.id,
+);
+
+export const DEFAULT_EXECUTIVE_DASHBOARD_METRIC_IDS: ExecutiveDashboardMetricId[] = [
+  "tracked_units",
+  "open_stock",
+  "registered_pending_delivery",
+  "pending_disbursement",
+  "quality_issues",
+  "bg_to_shipment_etd_median",
+];
+
+export const MAX_EXECUTIVE_DASHBOARD_METRICS = 6;
+
 export const EXPLORER_PRESET_LABELS: Record<ExplorerPreset, string> = {
   open_stock: "Open Stock",
   pending_shipment: "Pending Shipment",
@@ -32,6 +79,28 @@ export const EXPLORER_PRESET_LABELS: Record<ExplorerPreset, string> = {
   aged_90_plus: "90+ Days Open",
   d2d_open: "Open D2D",
 };
+
+export function normalizeExecutiveDashboardMetricIds(
+  metricIds?: string[] | null,
+): ExecutiveDashboardMetricId[] {
+  const allowedIds = new Set(EXECUTIVE_DASHBOARD_METRIC_IDS);
+  const normalized = (metricIds ?? []).filter(
+    (metricId): metricId is ExecutiveDashboardMetricId =>
+      allowedIds.has(metricId as ExecutiveDashboardMetricId),
+  );
+
+  if (normalized.length === 0) {
+    return [...DEFAULT_EXECUTIVE_DASHBOARD_METRIC_IDS];
+  }
+
+  return [...new Set(normalized)].slice(0, MAX_EXECUTIVE_DASHBOARD_METRICS);
+}
+
+export function createDefaultDashboardPreferences(): DashboardPreferences {
+  return {
+    executiveMetricIds: [...DEFAULT_EXECUTIVE_DASHBOARD_METRIC_IDS],
+  };
+}
 
 export const platformModules: PlatformModule[] = [
   {

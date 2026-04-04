@@ -9,6 +9,7 @@ import { AuditController } from "./audit/audit.controller.js";
 import { AdminController } from "./admin/admin.controller.js";
 import { NavigationController } from "./navigation/navigation.controller.js";
 import { NotificationsController } from "./notifications/notifications.controller.js";
+import { PreferencesController } from "./preferences/preferences.controller.js";
 import { PlatformStoreService } from "./storage/platform-store.service.js";
 import { PlatformAuthSessionService } from "./auth/platform-auth-session.service.js";
 import { ApiAuthGuard } from "./common/api-auth.guard.js";
@@ -31,6 +32,7 @@ import { SupabasePlatformRepository } from "./supabase/supabase-platform.reposit
     AdminController,
     NavigationController,
     NotificationsController,
+    PreferencesController,
   ],
   providers: [
     PlatformStoreService,

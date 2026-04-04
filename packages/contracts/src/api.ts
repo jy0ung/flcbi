@@ -3,6 +3,7 @@ import type {
   AlertRule,
   AuditEvent,
   AuthSession,
+  DashboardPreferences,
   ExplorerQuery,
   ExplorerResult,
   FilterOptions,
@@ -31,6 +32,14 @@ export interface NavigationResponse {
 
 export interface MeResponse {
   session: AuthSession;
+}
+
+export interface DashboardPreferencesResponse {
+  preferences: DashboardPreferences;
+}
+
+export interface UpdateDashboardPreferencesRequest {
+  executiveMetricIds: DashboardPreferences["executiveMetricIds"];
 }
 
 export interface AgingSummaryResponse {

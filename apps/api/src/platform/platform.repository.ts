@@ -3,8 +3,10 @@ import type {
   AlertRule,
   AppRole,
   AuditEvent,
+  DashboardPreferences,
   DataQualityIssue,
   ExplorerQuery,
+  ExplorerPreset,
   ExplorerResult,
   ImportBatch,
   ImportPublishMode,
@@ -51,9 +53,14 @@ export interface PlatformRepository {
   getImportById(user: User, id: string): Awaitable<ImportDetail>;
   createImportPreview(user: User, fileName: string, fileBuffer: Buffer): Awaitable<ImportDetail>;
   publishImport(user: User, id: string, mode?: ImportPublishMode): Awaitable<ImportBatch>;
+  getDashboardPreferences(user: User): Awaitable<DashboardPreferences>;
+  saveDashboardPreferences(user: User, preferences: DashboardPreferences): Awaitable<DashboardPreferences>;
   listSlas(user: User): Awaitable<SlaPolicy[]>;
   updateSla(user: User, id: string, slaDays: number): Awaitable<SlaPolicy>;
-  getSummary(user: User, filters?: { branch?: string; model?: string }): Awaitable<AgingSummary>;
+  getSummary(
+    user: User,
+    filters?: { branch?: string; model?: string; payment?: string; preset?: ExplorerPreset },
+  ): Awaitable<AgingSummary>;
   queryExplorer(user: User, query: ExplorerQuery): Awaitable<ExplorerResult>;
   getVehicle(user: User, chassisNo: string): Awaitable<VehicleDetail>;
   getQualityIssues(user: User): Awaitable<DataQualityIssue[]>;

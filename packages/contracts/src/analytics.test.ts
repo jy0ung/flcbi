@@ -3,6 +3,8 @@ import {
   buildAgingSummary,
   buildStockSnapshot,
   createDefaultSlaPolicies,
+  DEFAULT_EXECUTIVE_DASHBOARD_METRIC_IDS,
+  normalizeExecutiveDashboardMetricIds,
   queryVehicles,
 } from "./analytics.js";
 import type { DataQualityIssue, ImportBatch, VehicleCanonical } from "./domain.js";
@@ -126,6 +128,20 @@ describe("queryVehicles", () => {
 
     expect(result.total).toBe(1);
     expect(result.items[0]?.chassis_no).toBe("PMK123456A");
+  });
+});
+
+describe("normalizeExecutiveDashboardMetricIds", () => {
+  it("falls back to defaults and removes duplicate or unsupported values", () => {
+    expect(normalizeExecutiveDashboardMetricIds()).toEqual(DEFAULT_EXECUTIVE_DASHBOARD_METRIC_IDS);
+    expect(
+      normalizeExecutiveDashboardMetricIds([
+        "tracked_units",
+        "quality_issues",
+        "unknown_metric",
+        "tracked_units",
+      ]),
+    ).toEqual(["tracked_units", "quality_issues"]);
   });
 });
 

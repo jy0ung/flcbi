@@ -4,6 +4,8 @@ import type {
   AgingSummaryResponse,
   AlertsResponse,
   AuditResponse,
+  DashboardPreferencesResponse,
+  ExecutiveDashboardMetricId,
   ExplorerQueryRequest,
   ExplorerQueryResponse,
   ImportDetailResponse,
@@ -66,10 +68,12 @@ export const apiClient = {
   getNavigation() {
     return request<NavigationResponse>("/navigation");
   },
-  getAgingSummary(query?: { branch?: string; model?: string }) {
+  getAgingSummary(query?: { branch?: string; model?: string; payment?: string; preset?: string }) {
     const params = new URLSearchParams();
     if (query?.branch) params.set("branch", query.branch);
     if (query?.model) params.set("model", query.model);
+    if (query?.payment) params.set("payment", query.payment);
+    if (query?.preset) params.set("preset", query.preset);
     const suffix = params.size > 0 ? `?${params.toString()}` : "";
     return request<AgingSummaryResponse>(`/aging/summary${suffix}`);
   },
@@ -136,6 +140,15 @@ export const apiClient = {
   },
   getAuditEvents() {
     return request<AuditResponse>("/audit");
+  },
+  getExecutiveDashboardPreferences() {
+    return request<DashboardPreferencesResponse>("/preferences/executive-dashboard");
+  },
+  updateExecutiveDashboardPreferences(executiveMetricIds: ExecutiveDashboardMetricId[]) {
+    return request<DashboardPreferencesResponse>("/preferences/executive-dashboard", {
+      method: "PUT",
+      body: JSON.stringify({ executiveMetricIds }),
+    });
   },
   getAdminUsers() {
     return request<AdminUsersResponse>("/admin/users");
