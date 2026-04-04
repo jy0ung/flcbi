@@ -126,6 +126,7 @@ export interface VehicleCanonical {
   shipment_etd_pkg?: string;
   shipment_eta_kk_twu_sdk?: string;
   date_received_by_outlet?: string;
+  reg_date?: string;
   delivery_date?: string;
   disb_date?: string;
   branch_code: string;
@@ -136,7 +137,6 @@ export interface VehicleCanonical {
   remark?: string;
   vaa_date?: string;
   full_payment_date?: string;
-  reg_date?: string;
   is_d2d: boolean;
   import_batch_id: string;
   source_row_id: string;
@@ -151,6 +151,9 @@ export interface VehicleCanonical {
   obr?: string;
   bg_to_delivery?: number | null;
   bg_to_shipment_etd?: number | null;
+  etd_to_outlet_received?: number | null;
+  outlet_received_to_reg?: number | null;
+  reg_to_delivery?: number | null;
   etd_to_eta?: number | null;
   eta_to_outlet_received?: number | null;
   outlet_received_to_delivery?: number | null;
@@ -255,15 +258,15 @@ export interface NavigationItem {
 export interface BranchComparison {
   branch: string;
   bgToDelivery: number;
-  etdToEta: number;
-  outletToDelivery: number;
+  etdToOutlet: number;
+  regToDelivery: number;
 }
 
 export interface TrendPoint {
   month: string;
   "BG→Delivery": number;
-  "ETD→ETA": number;
-  "Outlet→Delivery": number;
+  "ETD→Out": number;
+  "Reg→Delivery": number;
 }
 
 export interface PaymentDistribution {
@@ -276,7 +279,7 @@ export interface OutlierPoint {
   chassisNo: string;
   branch: string;
   bgToDelivery: number;
-  etdToEta: number;
+  etdToOut: number;
 }
 
 export interface StockSnapshot {
@@ -284,6 +287,7 @@ export interface StockSnapshot {
   pendingShipment: number;
   inTransit: number;
   atOutlet: number;
+  registeredPendingDelivery: number;
   deliveredPendingDisbursement: number;
   disbursed: number;
   d2dOpenTransfers: number;
@@ -297,6 +301,19 @@ export interface FilterOptions {
   models: string[];
   payments: string[];
 }
+
+export type ExplorerPreset =
+  | "open_stock"
+  | "pending_shipment"
+  | "in_transit"
+  | "at_outlet"
+  | "registered_pending_delivery"
+  | "pending_disbursement"
+  | "disbursed"
+  | "aged_30_plus"
+  | "aged_60_plus"
+  | "aged_90_plus"
+  | "d2d_open";
 
 export interface AgingSummary {
   totalVehicles: number;
@@ -321,6 +338,7 @@ export interface ExplorerQuery {
   branch?: string;
   model?: string;
   payment?: string;
+  preset?: ExplorerPreset;
   page: number;
   pageSize: number;
   sortField?: keyof VehicleCanonical;

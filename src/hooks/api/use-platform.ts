@@ -27,6 +27,7 @@ export function useExplorer(query: ExplorerQueryRequest, enabled = true) {
       query.branch ?? "all",
       query.model ?? "all",
       query.payment ?? "all",
+      query.preset ?? "all",
       query.page,
       query.pageSize,
       query.sortField ?? "bg_to_delivery",

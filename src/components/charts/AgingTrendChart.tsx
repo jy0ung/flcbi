@@ -26,8 +26,8 @@ export function AgingTrendChart({ data }: Props) {
           />
           <Legend wrapperStyle={{ fontSize: '11px' }} />
           <Line type="monotone" dataKey="BG→Delivery" stroke="hsl(var(--primary))" strokeWidth={2} dot={{ r: 3 }} activeDot={{ r: 5 }} />
-          <Line type="monotone" dataKey="ETD→ETA" stroke="hsl(199, 89%, 48%)" strokeWidth={2} dot={{ r: 3 }} />
-          <Line type="monotone" dataKey="Outlet→Delivery" stroke="hsl(142, 71%, 45%)" strokeWidth={2} dot={{ r: 3 }} />
+          <Line type="monotone" dataKey="ETD→Out" stroke="hsl(199, 89%, 48%)" strokeWidth={2} dot={{ r: 3 }} />
+          <Line type="monotone" dataKey="Reg→Delivery" stroke="hsl(142, 71%, 45%)" strokeWidth={2} dot={{ r: 3 }} />
         </LineChart>
       </ResponsiveContainer>
     </div>

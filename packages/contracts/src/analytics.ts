@@ -2,6 +2,7 @@ import type {
   AgingSummary,
   BranchComparison,
   DataQualityIssue,
+  ExplorerPreset,
   ExplorerQuery,
   ExplorerResult,
   FilterOptions,
@@ -17,6 +18,20 @@ import type {
   VehicleCanonical,
 } from "./domain.js";
 import { KPI_DEFINITIONS } from "./kpis.js";
+
+export const EXPLORER_PRESET_LABELS: Record<ExplorerPreset, string> = {
+  open_stock: "Open Stock",
+  pending_shipment: "Pending Shipment",
+  in_transit: "In Transit",
+  at_outlet: "At Outlet",
+  registered_pending_delivery: "Registered Pending Delivery",
+  pending_disbursement: "Pending Disbursement",
+  disbursed: "Disbursed",
+  aged_30_plus: "30+ Days Open",
+  aged_60_plus: "60+ Days Open",
+  aged_90_plus: "90+ Days Open",
+  d2d_open: "Open D2D",
+};
 
 export const platformModules: PlatformModule[] = [
   {
@@ -128,13 +143,15 @@ export function buildFilterOptions(vehicles: VehicleCanonical[]): FilterOptions 
 }
 
 export function buildBranchComparison(vehicles: VehicleCanonical[]): BranchComparison[] {
-  const groups = new Map<string, { bgToDelivery: number[]; etdToEta: number[]; outletToDelivery: number[] }>();
+  const groups = new Map<string, { bgToDelivery: number[]; etdToOutlet: number[]; regToDelivery: number[] }>();
   vehicles.forEach((vehicle) => {
-    const entry = groups.get(vehicle.branch_code) ?? { bgToDelivery: [], etdToEta: [], outletToDelivery: [] };
+    const entry = groups.get(vehicle.branch_code) ?? { bgToDelivery: [], etdToOutlet: [], regToDelivery: [] };
     if (vehicle.bg_to_delivery != null && vehicle.bg_to_delivery >= 0) entry.bgToDelivery.push(vehicle.bg_to_delivery);
-    if (vehicle.etd_to_eta != null && vehicle.etd_to_eta >= 0) entry.etdToEta.push(vehicle.etd_to_eta);
-    if (vehicle.outlet_received_to_delivery != null && vehicle.outlet_received_to_delivery >= 0) {
-      entry.outletToDelivery.push(vehicle.outlet_received_to_delivery);
+    if (vehicle.etd_to_outlet_received != null && vehicle.etd_to_outlet_received >= 0) {
+      entry.etdToOutlet.push(vehicle.etd_to_outlet_received);
+    }
+    if (vehicle.reg_to_delivery != null && vehicle.reg_to_delivery >= 0) {
+      entry.regToDelivery.push(vehicle.reg_to_delivery);
     }
     groups.set(vehicle.branch_code, entry);
   });
@@ -146,22 +163,24 @@ export function buildBranchComparison(vehicles: VehicleCanonical[]): BranchCompa
     .map(([branch, values]) => ({
       branch,
       bgToDelivery: average(values.bgToDelivery),
-      etdToEta: average(values.etdToEta),
-      outletToDelivery: average(values.outletToDelivery),
+      etdToOutlet: average(values.etdToOutlet),
+      regToDelivery: average(values.regToDelivery),
     }))
     .sort((left, right) => right.bgToDelivery - left.bgToDelivery);
 }
 
 export function buildTrend(vehicles: VehicleCanonical[]): TrendPoint[] {
-  const monthMap = new Map<string, { bgToDel: number[]; etdToEta: number[]; outletToDel: number[] }>();
+  const monthMap = new Map<string, { bgToDel: number[]; etdToOut: number[]; regToDel: number[] }>();
   vehicles.forEach((vehicle) => {
     if (!vehicle.bg_date) return;
     const month = vehicle.bg_date.slice(0, 7);
-    const entry = monthMap.get(month) ?? { bgToDel: [], etdToEta: [], outletToDel: [] };
+    const entry = monthMap.get(month) ?? { bgToDel: [], etdToOut: [], regToDel: [] };
     if (vehicle.bg_to_delivery != null && vehicle.bg_to_delivery >= 0) entry.bgToDel.push(vehicle.bg_to_delivery);
-    if (vehicle.etd_to_eta != null && vehicle.etd_to_eta >= 0) entry.etdToEta.push(vehicle.etd_to_eta);
-    if (vehicle.outlet_received_to_delivery != null && vehicle.outlet_received_to_delivery >= 0) {
-      entry.outletToDel.push(vehicle.outlet_received_to_delivery);
+    if (vehicle.etd_to_outlet_received != null && vehicle.etd_to_outlet_received >= 0) {
+      entry.etdToOut.push(vehicle.etd_to_outlet_received);
+    }
+    if (vehicle.reg_to_delivery != null && vehicle.reg_to_delivery >= 0) {
+      entry.regToDel.push(vehicle.reg_to_delivery);
     }
     monthMap.set(month, entry);
   });
@@ -174,8 +193,8 @@ export function buildTrend(vehicles: VehicleCanonical[]): TrendPoint[] {
     .map(([month, values]) => ({
       month,
       "BG→Delivery": average(values.bgToDel),
-      "ETD→ETA": average(values.etdToEta),
-      "Outlet→Delivery": average(values.outletToDel),
+      "ETD→Out": average(values.etdToOut),
+      "Reg→Delivery": average(values.regToDel),
     }));
 }
 
@@ -201,14 +220,14 @@ export function buildOutliers(vehicles: VehicleCanonical[]): OutlierPoint[] {
       (vehicle) =>
         vehicle.bg_to_delivery != null &&
         vehicle.bg_to_delivery >= 0 &&
-        vehicle.etd_to_eta != null &&
-        vehicle.etd_to_eta >= 0,
+        vehicle.etd_to_outlet_received != null &&
+        vehicle.etd_to_outlet_received >= 0,
     )
     .map((vehicle) => ({
       chassisNo: vehicle.chassis_no,
       branch: vehicle.branch_code,
       bgToDelivery: vehicle.bg_to_delivery as number,
-      etdToEta: vehicle.etd_to_eta as number,
+      etdToOut: vehicle.etd_to_outlet_received as number,
     }));
 }
 
@@ -223,6 +242,44 @@ function diffDays(from?: string, to?: string) {
   const end = parseIsoDate(to);
   if (!start || !end) return null;
   return Math.floor((end.getTime() - start.getTime()) / 86_400_000);
+}
+
+export function matchesExplorerPreset(
+  vehicle: VehicleCanonical,
+  preset?: ExplorerPreset,
+  referenceDate = new Date().toISOString().slice(0, 10),
+) {
+  if (!preset) return true;
+
+  const isOpenStock = !vehicle.delivery_date;
+  const openAge = diffDays(vehicle.bg_date, referenceDate);
+
+  switch (preset) {
+    case "open_stock":
+      return isOpenStock;
+    case "pending_shipment":
+      return isOpenStock && !vehicle.shipment_etd_pkg;
+    case "in_transit":
+      return isOpenStock && Boolean(vehicle.shipment_etd_pkg) && !vehicle.date_received_by_outlet;
+    case "at_outlet":
+      return isOpenStock && Boolean(vehicle.date_received_by_outlet) && !vehicle.reg_date;
+    case "registered_pending_delivery":
+      return isOpenStock && Boolean(vehicle.reg_date);
+    case "pending_disbursement":
+      return Boolean(vehicle.delivery_date) && !vehicle.disb_date;
+    case "disbursed":
+      return Boolean(vehicle.disb_date);
+    case "aged_30_plus":
+      return isOpenStock && openAge != null && openAge >= 30;
+    case "aged_60_plus":
+      return isOpenStock && openAge != null && openAge >= 60;
+    case "aged_90_plus":
+      return isOpenStock && openAge != null && openAge >= 90;
+    case "d2d_open":
+      return isOpenStock && vehicle.is_d2d;
+    default:
+      return true;
+  }
 }
 
 export function buildStockSnapshot(
@@ -244,7 +301,10 @@ export function buildStockSnapshot(
     inTransit: openVehicles.filter(
       (vehicle) => Boolean(vehicle.shipment_etd_pkg) && !vehicle.date_received_by_outlet,
     ).length,
-    atOutlet: openVehicles.filter((vehicle) => Boolean(vehicle.date_received_by_outlet)).length,
+    atOutlet: openVehicles.filter(
+      (vehicle) => Boolean(vehicle.date_received_by_outlet) && !vehicle.reg_date,
+    ).length,
+    registeredPendingDelivery: openVehicles.filter((vehicle) => Boolean(vehicle.reg_date)).length,
     deliveredPendingDisbursement: vehicles.filter(
       (vehicle) => Boolean(vehicle.delivery_date) && !vehicle.disb_date,
     ).length,
@@ -294,6 +354,7 @@ export function queryVehicles(
   vehicles: VehicleCanonical[],
   query: ExplorerQuery,
 ): ExplorerResult {
+  const referenceDate = new Date().toISOString().slice(0, 10);
   const filtered = vehicles
     .filter((vehicle) => {
       if (query.search) {
@@ -307,6 +368,7 @@ export function queryVehicles(
       if (query.branch && query.branch !== "all" && vehicle.branch_code !== query.branch) return false;
       if (query.model && query.model !== "all" && vehicle.model !== query.model) return false;
       if (query.payment && query.payment !== "all" && vehicle.payment_method !== query.payment) return false;
+      if (!matchesExplorerPreset(vehicle, query.preset, referenceDate)) return false;
       return true;
     })
     .sort((left, right) => {

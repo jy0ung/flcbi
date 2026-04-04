@@ -90,6 +90,8 @@ Use the company admin account created by `npm run bootstrap:supabase` or `npm ru
 - Import previews now persist raw rows and validation issues in Supabase, so publish can survive an API restart
 - Full-file uploads now default to `replace` mode, which refreshes the live snapshot without deleting import history
 - `merge` mode remains available for exceptional incremental uploads
+- The active Auto Aging milestone flow is `BG -> ETD -> OUT -> REG -> DEL -> DISB`
+- A downloadable import template now lives at `public/templates/auto-aging-import-template.xlsx` and can be regenerated with `npm run generate:import-template`
 - KPI, explorer, import parsing, and domain contracts live in one shared package
 - Queue, scheduler, warehouse, and storage primitives are scaffolded in-repo for the next implementation phases
 - The Supabase migration target, rollout order, and schema plan live in `docs/supabase-migration-blueprint.md`
@@ -115,6 +117,7 @@ npm run test-server:dev
 npm run test-server:links
 npm run smoke:import
 npm run smoke:publish-modes
+npm run generate:import-template
 npm run build:platform
 npm run test
 ```

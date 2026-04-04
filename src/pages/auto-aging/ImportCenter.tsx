@@ -2,7 +2,7 @@ import React, { useState, useCallback } from 'react';
 import { PageHeader } from '@/components/shared/PageHeader';
 import { StatusBadge } from '@/components/shared/StatusBadge';
 import { Button } from '@/components/ui/button';
-import { Upload, FileSpreadsheet, CheckCircle, AlertTriangle, Loader2 } from 'lucide-react';
+import { Upload, FileSpreadsheet, CheckCircle, AlertTriangle, Download, Loader2 } from 'lucide-react';
 import { useCreateImport, usePublishImport } from '@/hooks/api/use-platform';
 import type { DataQualityIssue, ImportBatch, ImportPublishMode } from '@flcbi/contracts';
 
@@ -99,6 +99,17 @@ export default function ImportCenter() {
         title="Import Center"
         description="Upload and process vehicle data workbooks"
         breadcrumbs={[{ label: 'FLC BI' }, { label: 'Auto Aging' }, { label: 'Import Center' }]}
+        actions={(
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => window.open('/templates/auto-aging-import-template.xlsx', '_blank', 'noopener,noreferrer')}
+            >
+              <Download className="h-3.5 w-3.5 mr-1" />Download Template
+            </Button>
+          </div>
+        )}
       />
 
       {/* Progress */}
@@ -158,6 +169,11 @@ export default function ImportCenter() {
                 <p className="text-sm text-muted-foreground">Supports .xlsx and .xls files with a "Combine Data" sheet</p>
                 <p className="text-xs text-muted-foreground mt-3">
                   Valid files are normalized and published automatically using <span className="font-medium text-foreground">{publishMode}</span> mode.
+                </p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Start from the downloadable template if you want the workbook headers to match the current
+                  {' '}<span className="font-medium text-foreground">BG - ETD - OUT - REG - DEL - DISB</span>{' '}
+                  schema.
                 </p>
               </div>
             </label>

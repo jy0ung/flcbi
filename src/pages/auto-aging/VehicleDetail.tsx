@@ -44,8 +44,8 @@ export default function VehicleDetail() {
   const milestones = [
     { label: 'BG Date', date: vehicle.bg_date },
     { label: 'Shipment ETD', date: vehicle.shipment_etd_pkg },
-    { label: 'Shipment ETA', date: vehicle.shipment_eta_kk_twu_sdk },
     { label: 'Outlet Received', date: vehicle.date_received_by_outlet },
+    { label: 'Register Date', date: vehicle.reg_date },
     { label: 'Delivery', date: vehicle.delivery_date },
     { label: 'Disbursement', date: vehicle.disb_date },
   ];

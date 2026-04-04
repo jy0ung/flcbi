@@ -16,8 +16,8 @@ describe("parseWorkbook", () => {
         "CHASSIS NO.",
         "BG DATE",
         "SHIPMENT ETD PKG",
-        "SHIPMENT ETA KK/TWU/SDK",
         "DATE RECEIVED BY OUTLET",
+        "REG DATE",
         "DELIVERY DATE",
         "DISB. DATE",
         "BRCH",
@@ -25,8 +25,8 @@ describe("parseWorkbook", () => {
         "PAYMENT METHOD",
         "REMARKS",
       ],
-      ["PMK123456A", 45748, 45755, 45763, 45768, 45774, 45782, "KK", "ATIVA", "Loan", "D2D transfer"],
-      ["PMK123456A", 45748, 45755, 45763, 45768, 45774, 45782, "KK", "ATIVA", "Loan", ""],
+      ["PMK123456A", 45748, 45755, 45768, 45770, 45774, 45782, "KK", "ATIVA", "Loan", "D2D transfer"],
+      ["PMK123456A", 45748, 45755, 45768, 45770, 45774, 45782, "KK", "ATIVA", "Loan", ""],
     ]);
 
     const parsed = parseWorkbook(workbook);
@@ -34,7 +34,7 @@ describe("parseWorkbook", () => {
     expect(parsed.missingColumns).toEqual([]);
     expect(parsed.rows).toHaveLength(2);
     expect(parsed.rows[0]?.bg_date).toBe("2025-04-01");
-    expect(parsed.rows[0]?.shipment_eta_kk_twu_sdk).toBe("2025-04-16");
+    expect(parsed.rows[0]?.reg_date).toBe("2025-04-23");
     expect(parsed.rows[0]?.is_d2d).toBe(true);
     expect(parsed.issues).toEqual(
       expect.arrayContaining([
@@ -53,15 +53,15 @@ describe("parseWorkbook", () => {
         "CHASSIS NO.",
         "BG DATE",
         "SHIPMENT ETD PKG",
-        "SHIPMENT ETA KK/TWU/SDK",
         "DATE RECEIVED BY OUTLET",
+        "REG DATE",
         "DELIVERY DATE",
         "DISB. DATE",
         "BRANCH",
         "MODEL",
         "PAYMENT METHOD",
       ],
-      ["", "01/04/2025", "05/04/2025", "16/04/2025", "17/04/2025", "20/04/2025", "25/04/2025", "MYY", "MYVI", "Cash"],
+      ["", "01/04/2025", "05/04/2025", "17/04/2025", "18/04/2025", "20/04/2025", "25/04/2025", "MYY", "MYVI", "Cash"],
     ]);
 
     const parsed = parseWorkbook(workbook);

@@ -1,9 +1,11 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
+import { KPI_DEFINITIONS } from '@flcbi/contracts';
+import type { ExplorerPreset, VehicleCanonical } from '@flcbi/contracts';
 import { PageHeader } from '@/components/shared/PageHeader';
 import { QueryErrorState } from '@/components/shared/QueryErrorState';
 import { useAuth } from '@/contexts/AuthContext';
-import { AlertTriangle, CheckCircle, Package, Store, Timer, TrendingUp, Truck, Wallet } from 'lucide-react';
+import { AlertTriangle, CheckCircle, Package, ReceiptText, Store, Timer, TrendingUp, Truck, Wallet } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 import { useAgingSummary } from '@/hooks/api/use-platform';
 
@@ -12,6 +14,23 @@ export default function ExecutiveDashboard() {
   const { user } = useAuth();
   const navigate = useNavigate();
   const summary = data?.summary;
+  const chartColors = ['hsl(0, 72%, 51%)', 'hsl(38, 92%, 50%)', 'hsl(38, 92%, 50%)', 'hsl(43, 96%, 56%)', 'hsl(142, 71%, 45%)', 'hsl(142, 71%, 45%)', 'hsl(142, 71%, 45%)'];
+
+  const navigateToExplorer = ({
+    preset,
+    sortField,
+    sortDirection,
+  }: {
+    preset?: ExplorerPreset;
+    sortField?: keyof VehicleCanonical;
+    sortDirection?: 'asc' | 'desc';
+  }) => {
+    const params = new URLSearchParams();
+    if (preset) params.set('preset', preset);
+    if (sortField) params.set('sortField', sortField);
+    if (sortDirection) params.set('sortDirection', sortDirection);
+    navigate(`/auto-aging/vehicles${params.size > 0 ? `?${params.toString()}` : ''}`);
+  };
 
   if (isLoading) {
     return <div className="text-sm text-muted-foreground">Loading executive dashboard...</div>;
@@ -34,37 +53,35 @@ export default function ExecutiveDashboard() {
   }
 
   const lastBatch = summary.latestImport;
-  const chartColors = ['hsl(0, 72%, 51%)', 'hsl(38, 92%, 50%)', 'hsl(38, 92%, 50%)', 'hsl(43, 96%, 56%)', 'hsl(142, 71%, 45%)', 'hsl(142, 71%, 45%)', 'hsl(142, 71%, 45%)'];
+  const kpiSortFieldById = Object.fromEntries(
+    KPI_DEFINITIONS.map((kpi) => [kpi.id, kpi.computedField]),
+  ) as Record<string, keyof VehicleCanonical>;
   const stockCards = [
-    { label: 'Open Stock', value: summary.stockSnapshot.openStock, icon: Package, tone: 'text-primary' },
-    { label: 'In Transit', value: summary.stockSnapshot.inTransit, icon: Truck, tone: 'text-info' },
-    { label: 'At Outlet', value: summary.stockSnapshot.atOutlet, icon: Store, tone: 'text-warning' },
-    {
-      label: 'Pending Disbursement',
-      value: summary.stockSnapshot.deliveredPendingDisbursement,
-      icon: Wallet,
-      tone: 'text-success',
-    },
+    { label: 'Open Stock', value: summary.stockSnapshot.openStock, icon: Package, tone: 'text-primary', onClick: () => navigateToExplorer({ preset: 'open_stock', sortField: 'bg_date', sortDirection: 'asc' }) },
+    { label: 'In Transit', value: summary.stockSnapshot.inTransit, icon: Truck, tone: 'text-info', onClick: () => navigateToExplorer({ preset: 'in_transit', sortField: 'shipment_etd_pkg', sortDirection: 'asc' }) },
+    { label: 'Registered Pending Delivery', value: summary.stockSnapshot.registeredPendingDelivery, icon: ReceiptText, tone: 'text-warning', onClick: () => navigateToExplorer({ preset: 'registered_pending_delivery', sortField: 'reg_date', sortDirection: 'asc' }) },
+    { label: 'Pending Disbursement', value: summary.stockSnapshot.deliveredPendingDisbursement, icon: Wallet, tone: 'text-success', onClick: () => navigateToExplorer({ preset: 'pending_disbursement', sortField: 'delivery_date', sortDirection: 'asc' }) },
   ] as const;
   const supportCards = [
-    { label: 'Tracked Units', value: summary.totalVehicles, icon: Timer, tone: 'text-foreground' },
-    { label: 'Import Batches', value: summary.importCount, icon: TrendingUp, tone: 'text-info' },
-    { label: 'SLA Breaches', value: summary.totalOverdue, icon: AlertTriangle, tone: 'text-warning' },
-    { label: 'Quality Issues', value: summary.totalIssues, icon: CheckCircle, tone: 'text-destructive' },
+    { label: 'Tracked Units', value: summary.totalVehicles, icon: Timer, tone: 'text-foreground', onClick: () => navigate('/auto-aging/vehicles') },
+    { label: 'Import Batches', value: summary.importCount, icon: TrendingUp, tone: 'text-info', onClick: () => navigate('/auto-aging/history') },
+    { label: 'SLA Breaches', value: summary.totalOverdue, icon: AlertTriangle, tone: 'text-warning', onClick: () => navigate('/auto-aging') },
+    { label: 'Quality Issues', value: summary.totalIssues, icon: CheckCircle, tone: 'text-destructive', onClick: () => navigate('/auto-aging/quality') },
   ] as const;
   const riskCards = [
-    { label: '30+ Days Open', value: summary.stockSnapshot.aged30Plus },
-    { label: '60+ Days Open', value: summary.stockSnapshot.aged60Plus },
-    { label: '90+ Days Open', value: summary.stockSnapshot.aged90Plus },
-    { label: 'Open D2D', value: summary.stockSnapshot.d2dOpenTransfers },
-    { label: 'Pending Shipment', value: summary.stockSnapshot.pendingShipment },
-    { label: 'Disbursed', value: summary.stockSnapshot.disbursed },
+    { label: '30+ Days Open', value: summary.stockSnapshot.aged30Plus, onClick: () => navigateToExplorer({ preset: 'aged_30_plus', sortField: 'bg_date', sortDirection: 'asc' }) },
+    { label: '60+ Days Open', value: summary.stockSnapshot.aged60Plus, onClick: () => navigateToExplorer({ preset: 'aged_60_plus', sortField: 'bg_date', sortDirection: 'asc' }) },
+    { label: '90+ Days Open', value: summary.stockSnapshot.aged90Plus, onClick: () => navigateToExplorer({ preset: 'aged_90_plus', sortField: 'bg_date', sortDirection: 'asc' }) },
+    { label: 'Open D2D', value: summary.stockSnapshot.d2dOpenTransfers, onClick: () => navigateToExplorer({ preset: 'd2d_open', sortField: 'bg_date', sortDirection: 'asc' }) },
+    { label: 'Pending Shipment', value: summary.stockSnapshot.pendingShipment, onClick: () => navigateToExplorer({ preset: 'pending_shipment', sortField: 'bg_date', sortDirection: 'asc' }) },
+    { label: 'Disbursed', value: summary.stockSnapshot.disbursed, onClick: () => navigateToExplorer({ preset: 'disbursed', sortField: 'disb_date', sortDirection: 'desc' }) },
   ] as const;
   const flowCards = [
-    { label: 'Pending Shipment', value: summary.stockSnapshot.pendingShipment },
-    { label: 'In Transit', value: summary.stockSnapshot.inTransit },
-    { label: 'At Outlet', value: summary.stockSnapshot.atOutlet },
-    { label: 'Delivered Pending Disbursement', value: summary.stockSnapshot.deliveredPendingDisbursement },
+    { label: 'Pending Shipment', value: summary.stockSnapshot.pendingShipment, onClick: () => navigateToExplorer({ preset: 'pending_shipment', sortField: 'bg_date', sortDirection: 'asc' }) },
+    { label: 'In Transit', value: summary.stockSnapshot.inTransit, onClick: () => navigateToExplorer({ preset: 'in_transit', sortField: 'shipment_etd_pkg', sortDirection: 'asc' }) },
+    { label: 'At Outlet', value: summary.stockSnapshot.atOutlet, onClick: () => navigateToExplorer({ preset: 'at_outlet', sortField: 'date_received_by_outlet', sortDirection: 'asc' }) },
+    { label: 'Registered Pending Delivery', value: summary.stockSnapshot.registeredPendingDelivery, onClick: () => navigateToExplorer({ preset: 'registered_pending_delivery', sortField: 'reg_date', sortDirection: 'asc' }) },
+    { label: 'Delivered Pending Disbursement', value: summary.stockSnapshot.deliveredPendingDisbursement, onClick: () => navigateToExplorer({ preset: 'pending_disbursement', sortField: 'delivery_date', sortDirection: 'asc' }) },
   ] as const;
   const focusKpis = [...summary.kpiSummaries]
     .sort((left, right) => right.overdueCount - left.overdueCount || right.median - left.median)
@@ -92,31 +109,43 @@ export default function ExecutiveDashboard() {
 
       <div className="space-y-2">
         <div>
-          <h2 className="text-sm font-semibold text-foreground">Live Stock Position</h2>
-          <p className="text-xs text-muted-foreground">The vehicles still moving through the pipeline right now.</p>
+          <div>
+            <h2 className="text-sm font-semibold text-foreground">Live Stock Position</h2>
+            <p className="text-xs text-muted-foreground">The vehicles still moving through the pipeline right now.</p>
+          </div>
         </div>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           {stockCards.map((card) => (
-            <div key={card.label} className="kpi-card">
+            <button
+              key={card.label}
+              type="button"
+              className="kpi-card text-left transition-transform hover:-translate-y-0.5 focus:outline-none focus:ring-1 focus:ring-ring"
+              onClick={card.onClick}
+            >
               <div className="flex items-center gap-2 mb-2">
                 <card.icon className={`h-4 w-4 ${card.tone}`} />
                 <span className="text-xs text-muted-foreground font-medium">{card.label}</span>
               </div>
               <p className={`text-2xl font-bold ${card.tone}`}>{card.value}</p>
-            </div>
+            </button>
           ))}
         </div>
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         {supportCards.map((card) => (
-          <div key={card.label} className="kpi-card">
+          <button
+            key={card.label}
+            type="button"
+            className="kpi-card text-left transition-transform hover:-translate-y-0.5 focus:outline-none focus:ring-1 focus:ring-ring"
+            onClick={card.onClick}
+          >
             <div className="flex items-center gap-2 mb-2">
               <card.icon className={`h-4 w-4 ${card.tone}`} />
               <span className="text-xs text-muted-foreground font-medium">{card.label}</span>
             </div>
             <p className={`text-2xl font-bold ${card.tone}`}>{card.value}</p>
-          </div>
+          </button>
         ))}
       </div>
 
@@ -132,7 +161,12 @@ export default function ExecutiveDashboard() {
               const denominator = Math.max(summary.stockSnapshot.openStock, 1);
               const width = Math.min(100, Math.round((card.value / denominator) * 100));
               return (
-                <div key={card.label} className="rounded-lg border border-border bg-secondary/20 p-4">
+                <button
+                  key={card.label}
+                  type="button"
+                  className="rounded-lg border border-border bg-secondary/20 p-4 text-left transition-colors hover:border-primary/40 focus:outline-none focus:ring-1 focus:ring-ring"
+                  onClick={card.onClick}
+                >
                   <div className="flex items-end justify-between gap-3">
                     <div>
                       <p className="text-xs text-muted-foreground">{card.label}</p>
@@ -143,7 +177,7 @@ export default function ExecutiveDashboard() {
                   <div className="mt-3 h-2 rounded-full bg-secondary">
                     <div className="h-2 rounded-full bg-primary" style={{ width: `${width}%` }} />
                   </div>
-                </div>
+                </button>
               );
             })}
           </div>
@@ -157,10 +191,15 @@ export default function ExecutiveDashboard() {
             </div>
             <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
               {riskCards.map((card) => (
-                <div key={card.label} className="rounded-lg border border-border bg-secondary/20 p-4">
+                <button
+                  key={card.label}
+                  type="button"
+                  className="rounded-lg border border-border bg-secondary/20 p-4 text-left transition-colors hover:border-primary/40 focus:outline-none focus:ring-1 focus:ring-ring"
+                  onClick={card.onClick}
+                >
                   <p className="text-xs text-muted-foreground">{card.label}</p>
                   <p className="text-xl font-semibold text-foreground mt-2">{card.value}</p>
-                </div>
+                </button>
               ))}
             </div>
           </div>
@@ -210,10 +249,18 @@ export default function ExecutiveDashboard() {
 
         <div className="glass-panel p-6">
           <h3 className="font-semibold text-foreground mb-1">KPI Watchlist</h3>
-          <p className="text-xs text-muted-foreground mb-4">The KPI lanes contributing the most current operational risk.</p>
+          <p className="text-xs text-muted-foreground mb-4">The KPI lanes contributing the most current operational risk. Click one to sort the explorer by that metric.</p>
           <div className="space-y-3">
             {focusKpis.map((kpi) => (
-              <div key={kpi.kpiId} className="rounded-lg border border-border bg-secondary/20 p-4">
+              <button
+                key={kpi.kpiId}
+                type="button"
+                className="w-full rounded-lg border border-border bg-secondary/20 p-4 text-left transition-colors hover:border-primary/40 focus:outline-none focus:ring-1 focus:ring-ring"
+                onClick={() => navigateToExplorer({
+                  sortField: kpiSortFieldById[kpi.kpiId] ?? 'bg_to_delivery',
+                  sortDirection: 'desc',
+                })}
+              >
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <p className="text-sm font-medium text-foreground">{kpi.shortLabel}</p>
@@ -226,7 +273,7 @@ export default function ExecutiveDashboard() {
                     <p className="text-[11px] text-muted-foreground">breaches</p>
                   </div>
                 </div>
-              </div>
+              </button>
             ))}
           </div>
         </div>

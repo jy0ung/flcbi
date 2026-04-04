@@ -23,9 +23,9 @@ insert into app.sla_policies (company_id, kpi_id, label, sla_days)
 values
   ('00000000-0000-0000-0000-000000000001', 'bg_to_delivery', 'BG Date to Delivery Date', 45),
   ('00000000-0000-0000-0000-000000000001', 'bg_to_shipment_etd', 'BG Date to Shipment ETD PKG', 14),
-  ('00000000-0000-0000-0000-000000000001', 'etd_to_eta', 'Shipment ETD PKG to Shipment ETA', 21),
-  ('00000000-0000-0000-0000-000000000001', 'eta_to_outlet', 'Shipment ETA to Date Received by Outlet', 7),
-  ('00000000-0000-0000-0000-000000000001', 'outlet_to_delivery', 'Date Received by Outlet to Delivery Date', 14),
+  ('00000000-0000-0000-0000-000000000001', 'etd_to_outlet', 'Shipment ETD PKG to Date Received by Outlet', 28),
+  ('00000000-0000-0000-0000-000000000001', 'outlet_to_reg', 'Date Received by Outlet to Register Date', 7),
+  ('00000000-0000-0000-0000-000000000001', 'reg_to_delivery', 'Register Date to Delivery Date', 7),
   ('00000000-0000-0000-0000-000000000001', 'bg_to_disb', 'BG Date to Disb. Date', 60),
   ('00000000-0000-0000-0000-000000000001', 'delivery_to_disb', 'Delivery Date to Disb. Date', 14)
 on conflict (company_id, kpi_id) do update

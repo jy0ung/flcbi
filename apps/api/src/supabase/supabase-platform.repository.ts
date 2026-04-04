@@ -118,6 +118,7 @@ interface VehicleRow {
   shipment_etd_pkg: string | null;
   shipment_eta: string | null;
   date_received_by_outlet: string | null;
+  reg_date: string | null;
   delivery_date: string | null;
   disb_date: string | null;
   model: string | null;
@@ -127,6 +128,9 @@ interface VehicleRow {
   is_d2d: boolean;
   bg_to_delivery: number | null;
   bg_to_shipment_etd: number | null;
+  etd_to_outlet_received: number | null;
+  outlet_received_to_reg: number | null;
+  reg_to_delivery: number | null;
   etd_to_eta: number | null;
   eta_to_outlet_received: number | null;
   outlet_received_to_delivery: number | null;
@@ -150,6 +154,7 @@ interface RawImportRow {
   shipment_etd_pkg: string | null;
   shipment_eta: string | null;
   date_received_by_outlet: string | null;
+  reg_date: string | null;
   delivery_date: string | null;
   disb_date: string | null;
   raw_payload: VehicleRaw | null;
@@ -544,10 +549,14 @@ export class SupabasePlatformRepository implements PlatformRepository {
       shipment_etd_pkg: vehicle.shipment_etd_pkg ?? null,
       shipment_eta: vehicle.shipment_eta_kk_twu_sdk ?? null,
       date_received_by_outlet: vehicle.date_received_by_outlet ?? null,
+      reg_date: vehicle.reg_date ?? null,
       delivery_date: vehicle.delivery_date ?? null,
       disb_date: vehicle.disb_date ?? null,
       bg_to_delivery: vehicle.bg_to_delivery ?? null,
       bg_to_shipment_etd: vehicle.bg_to_shipment_etd ?? null,
+      etd_to_outlet_received: vehicle.etd_to_outlet_received ?? null,
+      outlet_received_to_reg: vehicle.outlet_received_to_reg ?? null,
+      reg_to_delivery: vehicle.reg_to_delivery ?? null,
       etd_to_eta: vehicle.etd_to_eta ?? null,
       eta_to_outlet_received: vehicle.eta_to_outlet_received ?? null,
       outlet_received_to_delivery: vehicle.outlet_received_to_delivery ?? null,
@@ -950,7 +959,7 @@ export class SupabasePlatformRepository implements PlatformRepository {
     const { data, error } = await client
       .schema("raw")
       .from("vehicle_import_rows")
-      .select("id, company_id, import_job_id, branch_id, source_row_number, chassis_no, model, payment_method, salesman_name, customer_name, is_d2d, bg_date, shipment_etd_pkg, shipment_eta, date_received_by_outlet, delivery_date, disb_date, raw_payload")
+      .select("id, company_id, import_job_id, branch_id, source_row_number, chassis_no, model, payment_method, salesman_name, customer_name, is_d2d, bg_date, shipment_etd_pkg, shipment_eta, date_received_by_outlet, reg_date, delivery_date, disb_date, raw_payload")
       .eq("company_id", companyId)
       .eq("import_job_id", importId)
       .order("source_row_number", { ascending: true });
@@ -968,7 +977,7 @@ export class SupabasePlatformRepository implements PlatformRepository {
     let query = client
       .schema("mart")
       .from("vehicle_aging")
-      .select("id, company_id, branch_id, branch_code, import_job_id, source_row_id, chassis_no, bg_date, shipment_etd_pkg, shipment_eta, date_received_by_outlet, delivery_date, disb_date, model, payment_method, salesman_name, customer_name, is_d2d, bg_to_delivery, bg_to_shipment_etd, etd_to_eta, eta_to_outlet_received, outlet_received_to_delivery, bg_to_disb, delivery_to_disb")
+      .select("id, company_id, branch_id, branch_code, import_job_id, source_row_id, chassis_no, bg_date, shipment_etd_pkg, shipment_eta, date_received_by_outlet, reg_date, delivery_date, disb_date, model, payment_method, salesman_name, customer_name, is_d2d, bg_to_delivery, bg_to_shipment_etd, etd_to_outlet_received, outlet_received_to_reg, reg_to_delivery, etd_to_eta, eta_to_outlet_received, outlet_received_to_delivery, bg_to_disb, delivery_to_disb")
       .eq("company_id", companyId);
 
     const visibleBranchId = user.branchId ?? null;
@@ -998,6 +1007,7 @@ export class SupabasePlatformRepository implements PlatformRepository {
       shipment_etd_pkg: row.shipment_etd_pkg ?? undefined,
       shipment_eta_kk_twu_sdk: row.shipment_eta ?? undefined,
       date_received_by_outlet: row.date_received_by_outlet ?? undefined,
+      reg_date: row.reg_date ?? undefined,
       delivery_date: row.delivery_date ?? undefined,
       disb_date: row.disb_date ?? undefined,
       branch_code: row.branch_code ?? "UNKNOWN",
@@ -1010,6 +1020,9 @@ export class SupabasePlatformRepository implements PlatformRepository {
       source_row_id: row.source_row_id ?? row.id,
       bg_to_delivery: row.bg_to_delivery,
       bg_to_shipment_etd: row.bg_to_shipment_etd,
+      etd_to_outlet_received: row.etd_to_outlet_received,
+      outlet_received_to_reg: row.outlet_received_to_reg,
+      reg_to_delivery: row.reg_to_delivery,
       etd_to_eta: row.etd_to_eta,
       eta_to_outlet_received: row.eta_to_outlet_received,
       outlet_received_to_delivery: row.outlet_received_to_delivery,
@@ -1053,6 +1066,7 @@ export class SupabasePlatformRepository implements PlatformRepository {
       shipment_etd_pkg: payload.shipment_etd_pkg ?? row.shipment_etd_pkg ?? undefined,
       shipment_eta_kk_twu_sdk: payload.shipment_eta_kk_twu_sdk ?? row.shipment_eta ?? undefined,
       date_received_by_outlet: payload.date_received_by_outlet ?? row.date_received_by_outlet ?? undefined,
+      reg_date: payload.reg_date ?? row.reg_date ?? undefined,
       delivery_date: payload.delivery_date ?? row.delivery_date ?? undefined,
       disb_date: payload.disb_date ?? row.disb_date ?? undefined,
       branch_code: payload.branch_code,
@@ -1063,7 +1077,6 @@ export class SupabasePlatformRepository implements PlatformRepository {
       remark: payload.remark,
       vaa_date: payload.vaa_date,
       full_payment_date: payload.full_payment_date,
-      reg_date: payload.reg_date,
       is_d2d: payload.is_d2d ?? row.is_d2d,
       source_row_no: payload.source_row_no,
       variant: payload.variant,
@@ -1105,6 +1118,7 @@ export class SupabasePlatformRepository implements PlatformRepository {
       shipment_etd_pkg: row.shipment_etd_pkg ?? null,
       shipment_eta: row.shipment_eta_kk_twu_sdk ?? null,
       date_received_by_outlet: row.date_received_by_outlet ?? null,
+      reg_date: row.reg_date ?? null,
       delivery_date: row.delivery_date ?? null,
       disb_date: row.disb_date ?? null,
       raw_payload: row,

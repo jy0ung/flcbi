@@ -64,14 +64,22 @@ export default function AutoAgingDashboard() {
 
   const branches = summary.filterOptions.branches;
   const models = summary.filterOptions.models;
+  const kpiById = new Map(summary.kpiSummaries.map((kpi) => [kpi.kpiId, kpi]));
 
   const processStages = [
     { label: 'BG Date', short: 'BG' },
     { label: 'Shipment ETD', short: 'ETD' },
-    { label: 'Shipment ETA', short: 'ETA' },
     { label: 'Outlet Received', short: 'OUT' },
+    { label: 'Register Date', short: 'REG' },
     { label: 'Delivery', short: 'DEL' },
     { label: 'Disbursement', short: 'DISB' },
+  ];
+  const processLinks = [
+    { id: 'bg_to_shipment_etd', median: kpiById.get('bg_to_shipment_etd')?.median },
+    { id: 'etd_to_outlet', median: kpiById.get('etd_to_outlet')?.median },
+    { id: 'outlet_to_reg', median: kpiById.get('outlet_to_reg')?.median },
+    { id: 'reg_to_delivery', median: kpiById.get('reg_to_delivery')?.median },
+    { id: 'delivery_to_disb', median: kpiById.get('delivery_to_disb')?.median },
   ];
 
   return (
@@ -121,7 +129,7 @@ export default function AutoAgingDashboard() {
               {i < processStages.length - 1 && (
                 <div className="flex-1 h-0.5 bg-border min-w-[20px] relative">
                   <div className="absolute -top-3 left-1/2 -translate-x-1/2 text-[10px] text-primary font-medium whitespace-nowrap">
-                    {summary.kpiSummaries[i]?.median ?? '—'}d
+                    {processLinks[i]?.median ?? '—'}d
                   </div>
                 </div>
               )}
@@ -157,8 +165,8 @@ export default function AutoAgingDashboard() {
               <YAxis tick={{ fontSize: 11, fill: 'hsl(215, 15%, 55%)' }} axisLine={false} />
               <Tooltip contentStyle={{ background: 'hsl(222, 44%, 10%)', border: '1px solid hsl(222, 20%, 18%)', borderRadius: '6px', fontSize: '12px', color: 'hsl(210, 20%, 92%)' }} />
               <Bar dataKey="bgToDelivery" name="BG→Delivery" fill="hsl(43, 96%, 56%)" radius={[3, 3, 0, 0]} />
-              <Bar dataKey="etdToEta" name="ETD→ETA" fill="hsl(199, 89%, 48%)" radius={[3, 3, 0, 0]} />
-              <Bar dataKey="outletToDelivery" name="Outlet→Delivery" fill="hsl(142, 71%, 45%)" radius={[3, 3, 0, 0]} />
+              <Bar dataKey="etdToOutlet" name="ETD→Out" fill="hsl(199, 89%, 48%)" radius={[3, 3, 0, 0]} />
+              <Bar dataKey="regToDelivery" name="Reg→Delivery" fill="hsl(142, 71%, 45%)" radius={[3, 3, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
         </div>
@@ -207,7 +215,8 @@ export default function AutoAgingDashboard() {
                 <th className="px-3 py-2 text-xs text-muted-foreground font-medium">Branch</th>
                 <th className="px-3 py-2 text-xs text-muted-foreground font-medium">Model</th>
                 <th className="px-3 py-2 text-xs text-muted-foreground font-medium">BG→Del</th>
-                <th className="px-3 py-2 text-xs text-muted-foreground font-medium">ETD→ETA</th>
+                <th className="px-3 py-2 text-xs text-muted-foreground font-medium">ETD→Out</th>
+                <th className="px-3 py-2 text-xs text-muted-foreground font-medium">Reg→Del</th>
                 <th className="px-3 py-2 text-xs text-muted-foreground font-medium">Status</th>
               </tr>
             </thead>
@@ -218,7 +227,8 @@ export default function AutoAgingDashboard() {
                     <td className="px-3 py-2 text-foreground">{v.branch_code}</td>
                     <td className="px-3 py-2 text-foreground">{v.model}</td>
                     <td className="px-3 py-2"><span className={(v.bg_to_delivery ?? 0) > 45 ? 'text-destructive font-semibold' : 'text-foreground'}>{v.bg_to_delivery}d</span></td>
-                    <td className="px-3 py-2 text-foreground">{v.etd_to_eta != null ? `${v.etd_to_eta}d` : '—'}</td>
+                    <td className="px-3 py-2 text-foreground">{v.etd_to_outlet_received != null ? `${v.etd_to_outlet_received}d` : '—'}</td>
+                    <td className="px-3 py-2 text-foreground">{v.reg_to_delivery != null ? `${v.reg_to_delivery}d` : '—'}</td>
                     <td className="px-3 py-2"><StatusBadge status={(v.bg_to_delivery ?? 0) > 45 ? 'warning' : 'active'} /></td>
                   </tr>
                 ))}

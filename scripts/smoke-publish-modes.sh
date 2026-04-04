@@ -11,6 +11,10 @@ SUPABASE_DB_CONTAINER="${SUPABASE_DB_CONTAINER:-supabase_db_flcbi}"
 ADMIN_EMAIL="${SMOKE_ADMIN_EMAIL:-${BOOTSTRAP_ADMIN_EMAIL}}"
 ADMIN_PASSWORD="${SMOKE_ADMIN_PASSWORD:-${BOOTSTRAP_ADMIN_PASSWORD:-}}"
 ANON_KEY="${VITE_SUPABASE_ANON_KEY:-${SUPABASE_ANON_KEY:-}}"
+PREVIOUS_IMPORT_ID="$(
+  docker exec "${SUPABASE_DB_CONTAINER}" psql -U postgres -d postgres -At -c \
+    "select import_job_id from app.vehicle_records limit 1;" 2>/dev/null | head -n 1
+)"
 
 if [[ -z "${ADMIN_PASSWORD}" ]]; then
   echo "Missing bootstrap admin password in environment." >&2
@@ -38,19 +42,19 @@ const [, , workbookPath, prefix, spec] = process.argv;
 const workbook = XLSX.utils.book_new();
 const rowsBySpec = {
   replace_a: [
-    ["CHASSIS NO.", "BG DATE", "SHIPMENT ETD PKG", "SHIPMENT ETA KK/TWU/SDK", "DATE RECEIVED BY OUTLET", "DELIVERY DATE", "DISB. DATE", "BRCH", "MODEL", "PAYMENT METHOD", "SA NAME", "CUST NAME", "REMARKS"],
+    ["CHASSIS NO.", "BG DATE", "SHIPMENT ETD PKG", "DATE RECEIVED BY OUTLET", "REG DATE", "DELIVERY DATE", "DISB. DATE", "BRCH", "MODEL", "PAYMENT METHOD", "SA NAME", "CUST NAME", "REMARKS"],
     [`${prefix}-A`, 45740, "", "", "", "", "", "KK", "ATIVA", "Loan", "Smoke Admin", "Customer A", "Pending shipment"],
-    [`${prefix}-B`, 45741, 45745, 45749, "", "", "", "KK", "MYVI", "Cash", "Smoke Admin", "Customer B", "In transit"],
-    [`${prefix}-C`, 45742, 45746, 45750, 45753, "", "", "MYY", "BEZZA", "Loan", "Smoke Admin", "Customer C", "At outlet"],
+    [`${prefix}-B`, 45741, 45745, "", "", "", "", "KK", "MYVI", "Cash", "Smoke Admin", "Customer B", "In transit"],
+    [`${prefix}-C`, 45742, 45746, 45753, "", "", "", "MYY", "BEZZA", "Loan", "Smoke Admin", "Customer C", "At outlet"],
   ],
   replace_b: [
-    ["CHASSIS NO.", "BG DATE", "SHIPMENT ETD PKG", "SHIPMENT ETA KK/TWU/SDK", "DATE RECEIVED BY OUTLET", "DELIVERY DATE", "DISB. DATE", "BRCH", "MODEL", "PAYMENT METHOD", "SA NAME", "CUST NAME", "REMARKS"],
-    [`${prefix}-B`, 45741, 45745, 45749, 45755, "", "", "KK", "MYVI", "Cash", "Smoke Admin", "Customer B Updated", "Moved to outlet"],
-    [`${prefix}-D`, 45744, 45748, 45752, "", "", "", "SDK", "ALZA", "Loan", "Smoke Admin", "Customer D", "Fresh transit"],
+    ["CHASSIS NO.", "BG DATE", "SHIPMENT ETD PKG", "DATE RECEIVED BY OUTLET", "REG DATE", "DELIVERY DATE", "DISB. DATE", "BRCH", "MODEL", "PAYMENT METHOD", "SA NAME", "CUST NAME", "REMARKS"],
+    [`${prefix}-B`, 45741, 45745, 45755, "", "", "", "KK", "MYVI", "Cash", "Smoke Admin", "Customer B Updated", "Moved to outlet"],
+    [`${prefix}-D`, 45744, 45748, "", "", "", "", "SDK", "ALZA", "Loan", "Smoke Admin", "Customer D", "Fresh transit"],
   ],
   merge_c: [
-    ["CHASSIS NO.", "BG DATE", "SHIPMENT ETD PKG", "SHIPMENT ETA KK/TWU/SDK", "DATE RECEIVED BY OUTLET", "DELIVERY DATE", "DISB. DATE", "BRCH", "MODEL", "PAYMENT METHOD", "SA NAME", "CUST NAME", "REMARKS"],
-    [`${prefix}-D`, 45744, 45748, 45752, 45758, "", "", "SDK", "ALZA", "Loan", "Smoke Admin", "Customer D Updated", "Reached outlet"],
+    ["CHASSIS NO.", "BG DATE", "SHIPMENT ETD PKG", "DATE RECEIVED BY OUTLET", "REG DATE", "DELIVERY DATE", "DISB. DATE", "BRCH", "MODEL", "PAYMENT METHOD", "SA NAME", "CUST NAME", "REMARKS"],
+    [`${prefix}-D`, 45744, 45748, 45758, 45761, "", "", "SDK", "ALZA", "Loan", "Smoke Admin", "Customer D Updated", "Reached registration"],
     [`${prefix}-E`, 45745, "", "", "", "", "", "KK", "AXIA", "Cash", "Smoke Admin", "Customer E", "New unit"],
   ],
 };
@@ -171,6 +175,13 @@ cleanup() {
     delete from app.dataset_versions where import_job_id in (${joined});
     delete from app.import_jobs where id in (${joined});
   " >/dev/null
+
+  if [[ -n "${PREVIOUS_IMPORT_ID}" ]]; then
+    curl -fsS -X POST "${API_URL}/imports/${PREVIOUS_IMPORT_ID}/publish" \
+      -H "Authorization: Bearer ${ACCESS_TOKEN}" \
+      -H "Content-Type: application/json" \
+      -d '{"mode":"replace"}' >/dev/null
+  fi
 }
 
 trap 'cleanup; rm -f "${AUTH_JSON}" "${QUERY_JSON}" "${WORKBOOK_ONE:-}" "${WORKBOOK_TWO:-}" "${WORKBOOK_THREE:-}"' EXIT

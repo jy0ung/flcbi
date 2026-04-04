@@ -12,6 +12,10 @@ ADMIN_EMAIL="${SMOKE_ADMIN_EMAIL:-${BOOTSTRAP_ADMIN_EMAIL}}"
 ADMIN_PASSWORD="${SMOKE_ADMIN_PASSWORD:-${BOOTSTRAP_ADMIN_PASSWORD:-}}"
 ANON_KEY="${VITE_SUPABASE_ANON_KEY:-${SUPABASE_ANON_KEY:-}}"
 KEEP_DATA="${SMOKE_IMPORT_KEEP_DATA:-false}"
+PREVIOUS_IMPORT_ID="$(
+  docker exec "${SUPABASE_DB_CONTAINER}" psql -U postgres -d postgres -At -c \
+    "select import_job_id from app.vehicle_records limit 1;" 2>/dev/null | head -n 1
+)"
 
 if [[ -z "${ADMIN_PASSWORD}" ]]; then
   echo "Missing bootstrap admin password in environment." >&2
@@ -42,8 +46,8 @@ const rows = [
     "CHASSIS NO.",
     "BG DATE",
     "SHIPMENT ETD PKG",
-    "SHIPMENT ETA KK/TWU/SDK",
     "DATE RECEIVED BY OUTLET",
+    "REG DATE",
     "DELIVERY DATE",
     "DISB. DATE",
     "BRCH",
@@ -57,8 +61,8 @@ const rows = [
     `SMOKE-${importStamp}-A`,
     45748,
     45755,
-    45763,
     45767,
+    45770,
     45774,
     45780,
     "KK",
@@ -72,8 +76,8 @@ const rows = [
     `SMOKE-${importStamp}-B`,
     45749,
     45756,
-    45764,
     45768,
+    45771,
     45775,
     45781,
     "MYY",
@@ -160,6 +164,13 @@ if [[ "${KEEP_DATA}" != "true" ]]; then
     delete from app.dataset_versions where import_job_id = '${IMPORT_ID}';
     delete from app.import_jobs where id = '${IMPORT_ID}';
   " >/dev/null
+
+  if [[ -n "${PREVIOUS_IMPORT_ID}" ]]; then
+    curl -fsS -X POST "${API_URL}/imports/${PREVIOUS_IMPORT_ID}/publish" \
+      -H "Authorization: Bearer ${ACCESS_TOKEN}" \
+      -H "Content-Type: application/json" \
+      -d '{"mode":"replace"}' >/dev/null
+  fi
 
   echo "Smoke import data cleaned up"
 fi
