@@ -71,13 +71,39 @@ const DATE_FIELDS = new Set<keyof VehicleRaw>([
 
 function parseExcelDate(val: unknown): string | undefined {
   if (!val) return undefined;
+  // Excel serial number
   if (typeof val === 'number') {
     const d = XLSX.SSF.parse_date_code(val);
     if (d) return `${d.y}-${String(d.m).padStart(2, '0')}-${String(d.d).padStart(2, '0')}`;
   }
   if (typeof val === 'string') {
-    const d = new Date(val);
+    const trimmed = val.trim();
+    if (!trimmed) return undefined;
+    // dd.mm.yyyy or dd.mm.yy (dot-separated)
+    const dotMatch = trimmed.match(/^(\d{1,2})\.(\d{1,2})\.(\d{2,4})$/);
+    if (dotMatch) {
+      const day = dotMatch[1].padStart(2, '0');
+      const month = dotMatch[2].padStart(2, '0');
+      let year = dotMatch[3];
+      if (year.length === 2) year = (parseInt(year) > 50 ? '19' : '20') + year;
+      return `${year}-${month}-${day}`;
+    }
+    // dd/mm/yyyy or dd/mm/yy (slash-separated)
+    const slashMatch = trimmed.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
+    if (slashMatch) {
+      const day = slashMatch[1].padStart(2, '0');
+      const month = slashMatch[2].padStart(2, '0');
+      let year = slashMatch[3];
+      if (year.length === 2) year = (parseInt(year) > 50 ? '19' : '20') + year;
+      return `${year}-${month}-${day}`;
+    }
+    // ISO or other parseable format
+    const d = new Date(trimmed);
     if (!isNaN(d.getTime())) return d.toISOString().split('T')[0];
+  }
+  // Date object (xlsx cellDates mode or openpyxl-style)
+  if (val instanceof Date && !isNaN(val.getTime())) {
+    return val.toISOString().split('T')[0];
   }
   return undefined;
 }
