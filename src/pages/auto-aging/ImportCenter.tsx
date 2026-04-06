@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { PageHeader } from '@/components/shared/PageHeader';
 import { StatusBadge } from '@/components/shared/StatusBadge';
 import { Button } from '@/components/ui/button';
@@ -8,8 +9,8 @@ import type { DataQualityIssue, ImportBatch, ImportPublishMode } from '@flcbi/co
 
 type Step = 'upload' | 'validating' | 'review' | 'publishing' | 'done';
 
-function isValidationPending(status?: ImportBatch['status']) {
-  return status === 'uploaded' || status === 'validating' || status === 'normalization_in_progress';
+function isImportPending(status?: ImportBatch['status']) {
+  return status === 'uploaded' || status === 'validating' || status === 'normalization_in_progress' || status === 'publish_in_progress';
 }
 
 const publishModeOptions: Array<{
@@ -30,6 +31,7 @@ const publishModeOptions: Array<{
 ];
 
 export default function ImportCenter() {
+  const queryClient = useQueryClient();
   const createImport = useCreateImport();
   const publishImport = usePublishImport();
   const [step, setStep] = useState<Step>('upload');
@@ -43,6 +45,7 @@ export default function ImportCenter() {
   const [publishMode, setPublishMode] = useState<ImportPublishMode>('replace');
   const [awaitingValidation, setAwaitingValidation] = useState(false);
   const autoPublishImportIdRef = useRef<string | null>(null);
+  const publishedImportIdRef = useRef<string | null>(null);
   const polledImport = useImport(batchId, awaitingValidation);
 
   const publishValidatedImport = useCallback((detail: { item: ImportBatch }) => {
@@ -56,8 +59,9 @@ export default function ImportCenter() {
     setError('');
     void publishImport.mutateAsync({ id: detail.item.id, mode: publishMode }).then((published) => {
       setPreview((currentPreview) => currentPreview ? { ...currentPreview, item: published.item } : currentPreview);
-      setAwaitingValidation(false);
-      setStep('done');
+      const stillPending = isImportPending(published.item.status);
+      setAwaitingValidation(stillPending);
+      setStep(published.item.status === 'published' ? 'done' : 'publishing');
     }).catch((mutationError) => {
       setAwaitingValidation(false);
       setStep('review');
@@ -71,7 +75,13 @@ export default function ImportCenter() {
     setValidationIssues(detail.previewIssues);
     setMissingCols(detail.missingColumns);
 
-    if (isValidationPending(detail.item.status)) {
+    if (detail.item.status === 'publish_in_progress') {
+      setAwaitingValidation(true);
+      setStep('publishing');
+      return;
+    }
+
+    if (isImportPending(detail.item.status)) {
       setAwaitingValidation(true);
       setStep('validating');
       return;
@@ -83,6 +93,12 @@ export default function ImportCenter() {
         setError('The worker could not finish validating this workbook. Please retry the upload.');
       }
       setStep('review');
+      return;
+    }
+
+    if (detail.item.status === 'published') {
+      setError('');
+      setStep('done');
       return;
     }
 
@@ -108,6 +124,7 @@ export default function ImportCenter() {
     setAwaitingValidation(false);
     setAutoPublishAttempted(false);
     autoPublishImportIdRef.current = null;
+    publishedImportIdRef.current = null;
     try {
       const response = await createImport.mutateAsync(file);
       applyImportDetail(response);
@@ -132,16 +149,18 @@ export default function ImportCenter() {
     }
 
     setAwaitingValidation(false);
-    setStep('upload');
+    setStep(step === 'publishing' ? 'review' : 'upload');
     setError(polledImport.error instanceof Error ? polledImport.error.message : 'Failed to refresh import validation status');
-  }, [awaitingValidation, polledImport.error]);
+  }, [awaitingValidation, polledImport.error, step]);
 
   const handlePublish = useCallback(() => {
     setStep('publishing');
     setError('');
     void publishImport.mutateAsync({ id: batchId, mode: publishMode }).then((published) => {
       setPreview((currentPreview) => currentPreview ? { ...currentPreview, item: published.item } : currentPreview);
-      setStep('done');
+      const stillPending = isImportPending(published.item.status);
+      setAwaitingValidation(stillPending);
+      setStep(published.item.status === 'published' ? 'done' : 'publishing');
     }).catch((mutationError) => {
       setStep('review');
       setError(mutationError instanceof Error ? mutationError.message : 'Failed to publish import');
@@ -160,7 +179,21 @@ export default function ImportCenter() {
     setAutoPublishAttempted(false);
     setPublishMode('replace');
     autoPublishImportIdRef.current = null;
+    publishedImportIdRef.current = null;
   };
+
+  useEffect(() => {
+    if (preview?.item.status !== 'published' || publishedImportIdRef.current === preview.item.id) {
+      return;
+    }
+
+    publishedImportIdRef.current = preview.item.id;
+    void queryClient.invalidateQueries({ queryKey: ['imports'] });
+    void queryClient.invalidateQueries({ queryKey: ['aging', 'summary'] });
+    void queryClient.invalidateQueries({ queryKey: ['aging', 'quality'] });
+    void queryClient.invalidateQueries({ queryKey: ['aging', 'explorer'] });
+    void queryClient.invalidateQueries({ queryKey: ['notifications'] });
+  }, [preview?.item.id, preview?.item.status, queryClient]);
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -354,7 +387,12 @@ export default function ImportCenter() {
             <div className="flex gap-2">
               <Button
                 onClick={handlePublish}
-                disabled={missingCols.length > 0 || !preview || preview.item.status === 'failed' || isValidationPending(preview.item.status)}
+                disabled={
+                  missingCols.length > 0
+                  || !preview
+                  || (!preview.item.previewAvailable && preview.item.status === 'failed')
+                  || isImportPending(preview.item.status)
+                }
               >
                 <CheckCircle className="h-4 w-4 mr-1" />Publish Canonical Data
               </Button>

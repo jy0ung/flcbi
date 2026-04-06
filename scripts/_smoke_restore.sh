@@ -99,6 +99,8 @@ PY
     -H "Content-Type: application/json" \
     -d "{\"mode\":\"${mode}\"}" > "${publish_json}"
 
+  wait_for_import_publish "${api_url}" "${access_token}" "${import_id}" "${publish_json}"
+
   python3 - "${publish_json}" "${mode}" <<'PY'
 import json
 import sys
@@ -148,6 +150,45 @@ while True:
 
     if time.time() >= deadline:
         raise SystemExit(f"Timed out waiting for import {import_id} to finish validation")
+
+    time.sleep(1)
+PY
+}
+
+wait_for_import_publish() {
+  local api_url="$1"
+  local access_token="$2"
+  local import_id="$3"
+  local output_json="$4"
+  local timeout_seconds="${5:-90}"
+
+  python3 - "${api_url}" "${access_token}" "${import_id}" "${output_json}" "${timeout_seconds}" <<'PY'
+import json
+import subprocess
+import sys
+import time
+
+api_url, token, import_id, out_path, timeout_seconds = sys.argv[1:6]
+deadline = time.time() + int(timeout_seconds)
+pending_statuses = {"publish_in_progress"}
+
+while True:
+    response = subprocess.run(
+        ["curl", "-fsS", "-H", f"Authorization: Bearer {token}", f"{api_url}/imports/{import_id}"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    payload = json.loads(response.stdout)
+    with open(out_path, "w", encoding="utf-8") as handle:
+        json.dump(payload, handle)
+
+    status = payload["item"]["status"]
+    if status not in pending_statuses:
+        raise SystemExit(0)
+
+    if time.time() >= deadline:
+        raise SystemExit(f"Timed out waiting for import {import_id} to finish publishing")
 
     time.sleep(1)
 PY

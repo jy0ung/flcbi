@@ -1,4 +1,4 @@
-import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Job } from "bullmq";
 import {
   IMPORT_PREVIEW_JOB_NAME,
@@ -8,6 +8,12 @@ import {
   parseWorkbook,
   summarizeParsedWorkbook,
 } from "@flcbi/contracts";
+import {
+  chunkArray,
+  getImportBucket,
+  getSupabaseAdminClient,
+  runBestEffort,
+} from "./supabase-admin.js";
 
 interface ImportJobRow {
   id: string;
@@ -15,26 +21,6 @@ interface ImportJobRow {
   storage_path: string | null;
   status: string;
   preview_available: boolean | null;
-}
-
-function getSupabaseAdminClient() {
-  const url = process.env.SUPABASE_URL;
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!url || !serviceRoleKey) {
-    throw new Error("Supabase admin credentials are not configured for the worker");
-  }
-
-  return createClient(url, serviceRoleKey, {
-    auth: {
-      autoRefreshToken: false,
-      detectSessionInUrl: false,
-      persistSession: false,
-    },
-  });
-}
-
-function getImportBucket() {
-  return process.env.SUPABASE_STORAGE_IMPORT_BUCKET ?? "flcbi-imports";
 }
 
 export async function processImportPreviewJob(job: Job<ImportPreviewJobPayload>) {
@@ -92,10 +78,10 @@ export async function processImportPreviewJob(job: Job<ImportPreviewJobPayload>)
       totalRows: summary.totalRows,
     };
   } catch (error) {
-    await runBestEffort(async () => {
+    await runBestEffort(`import_preview_cleanup:${importJob.id}`, async () => {
       await clearImportPreviewArtifacts(client, importJob.company_id, importJob.id);
     });
-    await runBestEffort(async () => {
+    await runBestEffort(`import_preview_mark_failed:${importJob.id}`, async () => {
       await client
         .schema("app")
         .from("import_jobs")
@@ -270,20 +256,4 @@ async function persistImportIssues(
       .insert(chunk)
       .throwOnError();
   }
-}
-
-async function runBestEffort(action: () => Promise<void>) {
-  try {
-    await action();
-  } catch {
-    // Keep the original worker error as the primary failure.
-  }
-}
-
-function chunkArray<T>(items: T[], chunkSize: number) {
-  const chunks: T[][] = [];
-  for (let index = 0; index < items.length; index += chunkSize) {
-    chunks.push(items.slice(index, index + chunkSize));
-  }
-  return chunks;
 }

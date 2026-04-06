@@ -139,9 +139,12 @@ export function usePublishImport() {
     onSuccess: (response, variables) => {
       void queryClient.invalidateQueries({ queryKey: ["imports"] });
       void queryClient.invalidateQueries({ queryKey: ["imports", variables.id] });
-      void queryClient.invalidateQueries({ queryKey: ["aging", "summary"] });
-      void queryClient.invalidateQueries({ queryKey: ["aging", "quality"] });
-      void queryClient.invalidateQueries({ queryKey: ["aging", "explorer"] });
+      if (!isImportPending(response.item.status)) {
+        void queryClient.invalidateQueries({ queryKey: ["aging", "summary"] });
+        void queryClient.invalidateQueries({ queryKey: ["aging", "quality"] });
+        void queryClient.invalidateQueries({ queryKey: ["aging", "explorer"] });
+        void queryClient.invalidateQueries({ queryKey: ["notifications"] });
+      }
       queryClient.setQueryData<ImportDetailResponse | undefined>(["imports", variables.id], (current) => (
         current
           ? { ...current, item: response.item }

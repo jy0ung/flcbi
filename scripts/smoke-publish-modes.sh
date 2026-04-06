@@ -143,6 +143,8 @@ PY
     -H "Content-Type: application/json" \
     -d "{\"mode\":\"${mode}\"}" > "${publish_json}"
 
+  wait_for_import_publish "${API_URL}" "${ACCESS_TOKEN}" "${import_id}" "${publish_json}"
+
   python3 - "${publish_json}" "${mode}" <<'PY'
 import json
 import sys

@@ -162,6 +162,8 @@ wait_for_import_validation "${API_URL}" "${ACCESS_TOKEN}" "${IMPORT_ID}" "${IMPO
 curl -sS -X POST "${API_URL}/imports/${IMPORT_ID}/publish" \
   -H "Authorization: Bearer ${ACCESS_TOKEN}" > "${PUBLISH_JSON}"
 
+wait_for_import_publish "${API_URL}" "${ACCESS_TOKEN}" "${IMPORT_ID}" "${PUBLISH_JSON}"
+
 curl -fsS -X POST "${API_URL}/aging/explorer/query" \
   -H "Authorization: Bearer ${ACCESS_TOKEN}" \
   -H "Content-Type: application/json" \

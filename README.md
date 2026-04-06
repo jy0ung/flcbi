@@ -98,11 +98,13 @@ Use the company admin account created by `npm run bootstrap:supabase` or `npm ru
 - The Supabase migration target, rollout order, and schema plan live in `docs/supabase-migration-blueprint.md`
 - The API repository layer now has a Supabase adapter for auth, users, SLAs, alerts, audit, imports, and tenant-scoped analytics reads
 - When Redis is configured, import preview parsing runs asynchronously through the in-repo queue and worker instead of blocking the API upload request
+- Import publish orchestration now also runs through the imports queue and worker, so the API hands off the heavy publish step and the UI polls `publish_in_progress`
+- Alert evaluation now runs through the alerts queue and worker, with the scheduler enqueueing hourly evaluations and API-side rule changes enqueueing immediate company refreshes
 
 ## Current Limitations
 
 - Some non-critical flows still use lightweight local fallbacks when Supabase is not configured for the environment
-- Import preview generation now runs through the worker when Redis is configured, but publish orchestration still runs in the API and alerts/exports remain scaffold-level queue jobs
+- Export jobs are still scaffold-level queue work; the scheduler and worker now handle alerts plus the async import pipeline, but exports do not have real business processing yet
 - OIDC/SCIM, dbt execution, observability exporters, and true warehouse promotion are not finished in this pass
 - The Supabase path is implemented and build-verified, but it still needs a live configured project to be exercised end to end
 

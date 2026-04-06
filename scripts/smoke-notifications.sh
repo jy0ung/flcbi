@@ -27,16 +27,20 @@ STAMP="$(date +%s)"
 IMPORT_FILENAME="smoke-notifications-${STAMP}.xlsx"
 NOTIFICATION_TITLE="Import published: ${IMPORT_FILENAME}"
 PREFIX="NOTIFY-${STAMP}"
+ALERT_NAME="Smoke alert ${STAMP}"
+ALERT_TITLE="${ALERT_NAME} triggered"
 WORKBOOK_PATH="$(mktemp --suffix=.xlsx)"
 AUTH_JSON="$(mktemp)"
 IMPORT_JSON="$(mktemp)"
 PUBLISH_JSON="$(mktemp)"
+ALERT_JSON="$(mktemp)"
 NOTIFICATIONS_JSON="$(mktemp)"
 NOTIFICATIONS_AFTER_JSON="$(mktemp)"
 DUPLICATE_JSON="$(mktemp)"
 ACCESS_TOKEN=""
 IMPORT_ID=""
 NOTIFICATION_ID=""
+ALERT_ID=""
 RESTORE_WORKBOOK="$(mktemp --suffix=.xlsx)"
 RESTORE_READY=false
 
@@ -53,6 +57,7 @@ cleanup() {
       "${AUTH_JSON}" \
       "${IMPORT_JSON}" \
       "${PUBLISH_JSON}" \
+      "${ALERT_JSON}" \
       "${NOTIFICATIONS_JSON}" \
       "${NOTIFICATIONS_AFTER_JSON}" \
       "${DUPLICATE_JSON}" \
@@ -66,6 +71,8 @@ cleanup() {
 
   docker exec "${SUPABASE_DB_CONTAINER}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c "
     delete from app.notifications where metadata ->> 'importId' = '${IMPORT_ID}';
+    delete from app.notifications where alert_rule_id = nullif('${ALERT_ID}', '')::uuid;
+    delete from app.alert_rules where id = nullif('${ALERT_ID}', '')::uuid;
     delete from app.vehicle_records where import_job_id = '${IMPORT_ID}';
     delete from app.quality_issues where import_job_id = '${IMPORT_ID}';
     delete from raw.vehicle_import_rows where import_job_id = '${IMPORT_ID}';
@@ -78,6 +85,7 @@ cleanup() {
     "${AUTH_JSON}" \
     "${IMPORT_JSON}" \
     "${PUBLISH_JSON}" \
+    "${ALERT_JSON}" \
     "${NOTIFICATIONS_JSON}" \
     "${NOTIFICATIONS_AFTER_JSON}" \
     "${DUPLICATE_JSON}" \
@@ -180,6 +188,8 @@ curl -fsS -X POST "${API_URL}/imports/${IMPORT_ID}/publish" \
   -H "Content-Type: application/json" \
   -d '{"mode":"merge"}' > "${PUBLISH_JSON}"
 
+wait_for_import_publish "${API_URL}" "${ACCESS_TOKEN}" "${IMPORT_ID}" "${PUBLISH_JSON}"
+
 python3 - "${PUBLISH_JSON}" <<'PY'
 import json
 import sys
@@ -259,6 +269,51 @@ assert status == "400", (status, body)
 assert "already been published" in body["message"], body
 PY
 
-echo "Notification smoke test succeeded"
-echo "Import ID: ${IMPORT_ID}"
-echo "Notification ID: ${NOTIFICATION_ID}"
+curl -fsS -X POST "${API_URL}/alerts" \
+  -H "Authorization: Bearer ${ACCESS_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -d "{\"name\":\"${ALERT_NAME}\",\"metricId\":\"tracked_units\",\"threshold\":1,\"comparator\":\"gte\",\"frequency\":\"hourly\",\"enabled\":true,\"channel\":\"in_app\"}" > "${ALERT_JSON}"
+
+ALERT_ID="$(
+  python3 - "${ALERT_JSON}" "${ALERT_NAME}" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    body = json.load(handle)
+
+alert_name = sys.argv[2]
+alert = next(item for item in body["items"] if item["name"] == alert_name)
+print(alert["id"])
+PY
+)"
+
+python3 - "${API_URL}" "${ACCESS_TOKEN}" "${ALERT_TITLE}" "${NOTIFICATIONS_JSON}" <<'PY'
+import json
+import subprocess
+import sys
+import time
+
+api_url, token, title, out_path = sys.argv[1:5]
+for _ in range(12):
+    response = subprocess.run(
+        ["curl", "-fsS", "-H", f"Authorization: Bearer {token}", f"{api_url}/notifications"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    payload = json.loads(response.stdout)
+    with open(out_path, "w", encoding="utf-8") as handle:
+        json.dump(payload, handle)
+
+    if any(item.get("title") == title for item in payload.get("items", [])):
+        raise SystemExit(0)
+
+    time.sleep(1)
+
+raise SystemExit(f"Alert notification {title!r} was not found")
+PY
+
+echo "Notifications smoke test succeeded"
+echo "Import notification title: ${NOTIFICATION_TITLE}"
+echo "Alert notification title: ${ALERT_TITLE}"

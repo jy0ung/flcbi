@@ -21,6 +21,7 @@ import { AUTH_SESSION_SERVICE } from "./auth/auth-session.service.js";
 import { SupabaseAdminService } from "./supabase/supabase-admin.service.js";
 import { SupabasePlatformRepository } from "./supabase/supabase-platform.repository.js";
 import { ImportQueueService } from "./queues/import-queue.service.js";
+import { AlertQueueService } from "./queues/alert-queue.service.js";
 
 @Module({
   controllers: [
@@ -42,6 +43,7 @@ import { ImportQueueService } from "./queues/import-queue.service.js";
     ObjectStorageService,
     SupabaseAdminService,
     ImportQueueService,
+    AlertQueueService,
     { provide: PLATFORM_REPOSITORY, useExisting: SupabasePlatformRepository },
     { provide: AUTH_SESSION_SERVICE, useExisting: PlatformAuthSessionService },
     { provide: APP_GUARD, useClass: ApiAuthGuard },

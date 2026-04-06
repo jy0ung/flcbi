@@ -8,10 +8,12 @@ import {
   UnauthorizedException,
 } from "@nestjs/common";
 import {
+  buildAlertNotificationFingerprint,
   buildAgingSummary,
   compareMetricValue,
   type Branch,
   createDefaultDashboardPreferences,
+  describeAlertComparator,
   getExecutiveDashboardMetricOption,
   getExecutiveMetricValue,
   matchesExplorerPreset,
@@ -46,6 +48,7 @@ import type {
   PlatformRoleDefinition,
   VehicleDetail,
 } from "../platform/platform.repository.js";
+import { AlertQueueService } from "../queues/alert-queue.service.js";
 import { ImportQueueService } from "../queues/import-queue.service.js";
 import { SupabaseAdminService } from "./supabase-admin.service.js";
 import {
@@ -244,6 +247,7 @@ export class SupabasePlatformRepository implements PlatformRepository {
   constructor(
     @Inject(SupabaseAdminService) private readonly supabase: SupabaseAdminService,
     @Inject(PlatformStoreService) private readonly fallback: PlatformStoreService,
+    @Inject(AlertQueueService) private readonly alertQueue: AlertQueueService,
     @Inject(ImportQueueService) private readonly importQueue: ImportQueueService,
   ) {}
 
@@ -274,7 +278,9 @@ export class SupabasePlatformRepository implements PlatformRepository {
       return this.fallback.getNotifications(user);
     }
 
-    await this.syncAlertNotificationsSafely(user, "notifications_list");
+    if (!this.alertQueue.isConfigured()) {
+      await this.syncAlertNotificationsSafely(user, "notifications_list");
+    }
     const rows = await this.fetchNotificationRows(user);
     return rows.map((row) => this.mapNotificationRow(row));
   }
@@ -609,7 +615,7 @@ export class SupabasePlatformRepository implements PlatformRepository {
       userName: user.name,
       details: `Created alert ${data.name}`,
     });
-    await this.syncAlertNotificationsSafely(user, "alert_create");
+    await this.triggerAlertEvaluation(user, companyId, "alert_create");
     return this.mapAlertRow(data as AlertRow);
   }
 
@@ -660,7 +666,7 @@ export class SupabasePlatformRepository implements PlatformRepository {
       userName: user.name,
       details: `Updated alert ${data.name}`,
     });
-    await this.syncAlertNotificationsSafely(user, "alert_update");
+    await this.triggerAlertEvaluation(user, companyId, "alert_update");
     return this.mapAlertRow(data as AlertRow);
   }
 
@@ -826,8 +832,6 @@ export class SupabasePlatformRepository implements PlatformRepository {
     const client = this.supabase.getAdminClient();
     const dbUserId = await this.resolveDbUserIdFromUser(user);
     const companyId = this.requireCompanyId(user);
-    const now = new Date().toISOString();
-    const branchIdByCode = await this.fetchBranchIdByCode(companyId);
     const { data: importJob, error: importJobError } = await client
       .schema("app")
       .from("import_jobs")
@@ -843,6 +847,39 @@ export class SupabasePlatformRepository implements PlatformRepository {
       throw new NotFoundException(`Import ${id} not found`);
     }
 
+    const importJobRow = importJob as ImportJobRow;
+    this.assertImportReadyForPublish(importJobRow);
+
+    if (this.importQueue.isConfigured()) {
+      await this.markImportQueuedForPublish(companyId, id, mode);
+      try {
+        await this.importQueue.enqueueImportPublish({
+          importId: id,
+          companyId,
+          publishMode: mode,
+          requestedByUserId: dbUserId ?? user.id,
+          requestedByUserName: user.name,
+        });
+      } catch (error) {
+        await this.runBestEffort(`import_publish_queue_restore:${id}`, async () => {
+          await this.restoreQueuedImportPublishState(companyId, importJobRow);
+        });
+        const message = error instanceof Error ? error.message : String(error);
+        throw new InternalServerErrorException(message);
+      }
+
+      const [item] = await this.mapImportRows([{
+        ...importJobRow,
+        status: "publish_in_progress",
+        published_at: null,
+        dataset_version_id: null,
+        publish_mode: mode,
+      }]);
+      return item;
+    }
+
+    const now = new Date().toISOString();
+    const branchIdByCode = await this.fetchBranchIdByCode(companyId);
     const preview = this.importPreviews.get(id);
     const previewRows = preview?.rows ?? await this.fetchPersistedRawRows(companyId, id);
     const previewIssues = preview?.issues ?? await this.fetchPersistedIssues(companyId, id);
@@ -922,7 +959,7 @@ export class SupabasePlatformRepository implements PlatformRepository {
         });
       });
     }
-    await this.syncAlertNotificationsSafely(user, "import_publish");
+    await this.triggerAlertEvaluation(user, companyId, "import_publish");
 
     const [item] = await this.mapImportRows([importRow]);
     return item;
@@ -1723,6 +1760,77 @@ export class SupabasePlatformRepository implements PlatformRepository {
     return new InternalServerErrorException(message);
   }
 
+  private assertImportReadyForPublish(importJob: ImportJobRow) {
+    if (importJob.status === "published") {
+      throw new BadRequestException(`Import ${importJob.id} has already been published`);
+    }
+
+    if (importJob.status === "publish_in_progress") {
+      throw new BadRequestException(`Import ${importJob.id} is already being published`);
+    }
+
+    if (importJob.status === "failed" && !this.isRetryablePublishFailure(importJob)) {
+      throw new BadRequestException("Import validation failed. Upload a corrected workbook before publishing.");
+    }
+
+    if (
+      importJob.status !== "validated" &&
+      importJob.status !== "normalization_complete" &&
+      !this.isRetryablePublishFailure(importJob)
+    ) {
+      throw new BadRequestException(`Import ${importJob.id} is not ready for publish from status ${importJob.status}`);
+    }
+  }
+
+  private isRetryablePublishFailure(importJob: ImportJobRow) {
+    return importJob.status === "failed"
+      && (importJob.preview_available ?? false)
+      && (importJob.missing_columns?.length ?? 0) === 0;
+  }
+
+  private async markImportQueuedForPublish(
+    companyId: string,
+    importId: string,
+    mode: ImportPublishMode,
+  ) {
+    const client = this.supabase.getAdminClient();
+    const { error } = await client
+      .schema("app")
+      .from("import_jobs")
+      .update({
+        status: "publish_in_progress",
+        published_at: null,
+        dataset_version_id: null,
+        publish_mode: mode,
+      })
+      .eq("company_id", companyId)
+      .eq("id", importId);
+
+    if (error) {
+      throw new InternalServerErrorException(error.message);
+    }
+  }
+
+  private async restoreQueuedImportPublishState(companyId: string, importJob: ImportJobRow) {
+    const client = this.supabase.getAdminClient();
+    const { error } = await client
+      .schema("app")
+      .from("import_jobs")
+      .update({
+        status: importJob.status,
+        published_at: importJob.published_at,
+        dataset_version_id: importJob.dataset_version_id,
+        publish_mode: importJob.publish_mode,
+        preview_available: importJob.preview_available ?? false,
+      })
+      .eq("company_id", companyId)
+      .eq("id", importJob.id);
+
+    if (error) {
+      throw new InternalServerErrorException(error.message);
+    }
+  }
+
   private async fetchVisibleVehicles(
     user: User,
     filters?: { branch?: string; model?: string; payment?: string; preset?: ExplorerPreset },
@@ -2065,6 +2173,7 @@ export class SupabasePlatformRepository implements PlatformRepository {
 
     const summary = await this.getSummary(user);
     const summaryScope = summary.latestImport?.datasetVersionId ?? summary.latestImport?.id ?? summary.lastRefresh;
+    const triggeredAt = new Date().toISOString();
 
     for (const alert of enabledAlerts) {
       if (!alert.createdBy || alert.createdBy === "system") {
@@ -2081,9 +2190,17 @@ export class SupabasePlatformRepository implements PlatformRepository {
         companyId,
         userId: alert.createdBy,
         title: `${alert.name} triggered`,
-        message: `${metric?.label ?? alert.metricId} is ${value} (${describeComparator(alert.comparator)} ${alert.threshold}).`,
+        message: `${metric?.label ?? alert.metricId} is ${value} (${describeAlertComparator(alert.comparator)} ${alert.threshold}).`,
         type: "warning",
-        fingerprint: ["alert", alert.id, summaryScope, alert.threshold, alert.comparator, value].join(":"),
+        fingerprint: buildAlertNotificationFingerprint({
+          alertId: alert.id,
+          frequency: alert.frequency,
+          triggeredAt,
+          summaryScope,
+          threshold: alert.threshold,
+          comparator: alert.comparator,
+          value,
+        }),
         alertRuleId: alert.id,
         metadata: {
           metricId: alert.metricId,
@@ -2098,6 +2215,21 @@ export class SupabasePlatformRepository implements PlatformRepository {
     await this.runBestEffort(`alert_notification_sync:${reason}`, async () => {
       await this.syncAlertNotifications(user);
     });
+  }
+
+  private async triggerAlertEvaluation(user: User, companyId: string, reason: string) {
+    if (this.alertQueue.isConfigured()) {
+      await this.runBestEffort(`alert_evaluation_enqueue:${reason}`, async () => {
+        await this.alertQueue.enqueueAlertEvaluation({
+          companyId,
+          triggeredAt: new Date().toISOString(),
+          reason,
+        });
+      });
+      return;
+    }
+
+    await this.syncAlertNotificationsSafely(user, reason);
   }
 
   private async runBestEffort(label: string, action: () => Promise<void>) {
@@ -2116,19 +2248,4 @@ function chunkArray<T>(items: T[], chunkSize: number) {
     chunks.push(items.slice(index, index + chunkSize));
   }
   return chunks;
-}
-
-function describeComparator(comparator: AlertRule["comparator"]) {
-  switch (comparator) {
-    case "gt":
-      return "above";
-    case "gte":
-      return "at or above";
-    case "lt":
-      return "below";
-    case "lte":
-      return "at or below";
-    default:
-      return comparator;
-  }
 }

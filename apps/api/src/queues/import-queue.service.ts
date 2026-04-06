@@ -1,15 +1,17 @@
 import { Injectable, Logger, OnApplicationShutdown } from "@nestjs/common";
 import { Queue } from "bullmq";
 import {
+  IMPORT_PUBLISH_JOB_NAME,
   IMPORT_PREVIEW_JOB_NAME,
   IMPORT_QUEUE_NAME,
+  type ImportPublishJobPayload,
   type ImportPreviewJobPayload,
 } from "@flcbi/contracts";
 
 @Injectable()
 export class ImportQueueService implements OnApplicationShutdown {
   private readonly logger = new Logger(ImportQueueService.name);
-  private queue?: Queue<ImportPreviewJobPayload>;
+  private queue?: Queue<ImportPreviewJobPayload | ImportPublishJobPayload>;
 
   isConfigured() {
     return Boolean(process.env.REDIS_URL);
@@ -54,6 +56,29 @@ export class ImportQueueService implements OnApplicationShutdown {
     return true;
   }
 
+  async enqueueImportPublish(payload: ImportPublishJobPayload) {
+    if (!this.isConfigured()) {
+      return false;
+    }
+
+    await this.getQueue().add(IMPORT_PUBLISH_JOB_NAME, payload, {
+      jobId: `import-publish-${payload.importId}`,
+      attempts: 3,
+      backoff: {
+        type: "exponential",
+        delay: 1000,
+      },
+      removeOnComplete: {
+        count: 100,
+      },
+      removeOnFail: {
+        count: 500,
+      },
+    });
+
+    return true;
+  }
+
   async onApplicationShutdown() {
     if (this.queue) {
       await this.queue.close();
@@ -67,7 +92,7 @@ export class ImportQueueService implements OnApplicationShutdown {
         throw new Error("REDIS_URL is not configured");
       }
 
-      this.queue = new Queue<ImportPreviewJobPayload>(IMPORT_QUEUE_NAME, {
+      this.queue = new Queue<ImportPreviewJobPayload | ImportPublishJobPayload>(IMPORT_QUEUE_NAME, {
         connection: { url: redisUrl },
       });
       this.queue.on("error", (error) => {
