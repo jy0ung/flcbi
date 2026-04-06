@@ -4,10 +4,12 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "${ROOT_DIR}/scripts/_test_server_env.sh"
+source "${ROOT_DIR}/scripts/_test_server_queue.sh"
 source "${ROOT_DIR}/scripts/_supabase_cli.sh"
 
 cd "${ROOT_DIR}"
 
+ensure_test_server_queue "${ROOT_DIR}"
 echo "Starting Supabase on dedicated FLC BI ports..."
 supabase_cli start
 

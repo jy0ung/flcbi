@@ -99,15 +99,16 @@ export default function Notifications() {
         </div>
       </div>
 
-      <div className="space-y-2">
+      <div className="space-y-2" data-testid="notifications-list">
         {notifications.length === 0 && (
-          <div className="glass-panel p-6 text-sm text-muted-foreground">
+          <div className="glass-panel p-6 text-sm text-muted-foreground" data-testid="notifications-empty">
             No notifications yet. Alerts and import updates will appear here once the platform is active.
           </div>
         )}
         {notifications.map((notification) => (
           <div
             key={notification.id}
+            data-testid="notification-item"
             className={`glass-panel flex items-start gap-3 p-4 ${!notification.read ? "border-l-2 border-primary" : ""}`}
           >
             <div className="flex-1">

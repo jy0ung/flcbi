@@ -2,6 +2,7 @@ import { Controller, Get, HttpException, HttpStatus, Inject } from "@nestjs/comm
 import { Public } from "../common/public.decorator.js";
 import { ObjectStorageService } from "../storage/object-storage.service.js";
 import { SupabaseAdminService } from "../supabase/supabase-admin.service.js";
+import { ImportQueueService } from "../queues/import-queue.service.js";
 
 type DependencyStatus = "up" | "down" | "configured" | "not_configured";
 
@@ -10,6 +11,7 @@ export class HealthController {
   constructor(
     @Inject(SupabaseAdminService) private readonly supabase: SupabaseAdminService,
     @Inject(ObjectStorageService) private readonly objectStorage: ObjectStorageService,
+    @Inject(ImportQueueService) private readonly importQueue: ImportQueueService,
   ) {}
 
   @Public()
@@ -29,18 +31,20 @@ export class HealthController {
   }
 
   private async buildHealthReport() {
-    const [supabase, objectStorage] = await Promise.all([
+    const [supabase, objectStorage, queue] = await Promise.all([
       this.supabase.checkHealth(),
       this.objectStorage.checkHealth(),
+      this.importQueue.checkHealth(),
     ]);
 
     const services: Record<string, DependencyStatus> = {
       api: "up",
       objectStorage,
-      queue: process.env.REDIS_URL ? "configured" : "not_configured",
+      queue,
       supabase,
     };
-    const ready = objectStorage !== "down" && supabase !== "down";
+    const queueReady = queue !== "down";
+    const ready = objectStorage !== "down" && supabase !== "down" && queueReady;
 
     return {
       status: ready ? "ok" : "degraded",

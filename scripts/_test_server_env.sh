@@ -16,4 +16,10 @@ source "${BASE_ENV_FILE}"
 if [[ -f "${LOCAL_ENV_FILE}" ]]; then
   source "${LOCAL_ENV_FILE}"
 fi
+
+if [[ -z "${REDIS_URL:-}" && -n "${REDIS_PORT:-}" ]]; then
+  REDIS_URL="redis://127.0.0.1:${REDIS_PORT}"
+  export REDIS_URL
+fi
+
 set +a

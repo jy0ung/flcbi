@@ -9,6 +9,8 @@ if [[ ! -f "${ROOT_DIR}/.env.test-server.local" ]]; then
 fi
 
 source "${ROOT_DIR}/scripts/_test_server_env.sh"
+source "${ROOT_DIR}/scripts/_test_server_queue.sh"
 
 cd "${ROOT_DIR}"
+ensure_test_server_queue "${ROOT_DIR}"
 npm run dev:platform

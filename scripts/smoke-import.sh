@@ -41,9 +41,8 @@ else
 fi
 
 cleanup() {
-  rm -f "${WORKBOOK_PATH}" "${AUTH_JSON}" "${IMPORT_JSON}" "${PUBLISH_JSON}" "${QUERY_JSON}" "${RESTORE_WORKBOOK:-}"
-
   if [[ -z "${IMPORT_ID}" || "${KEEP_DATA}" == "true" ]]; then
+    rm -f "${WORKBOOK_PATH}" "${AUTH_JSON}" "${IMPORT_JSON}" "${PUBLISH_JSON}" "${QUERY_JSON}" "${RESTORE_WORKBOOK:-}"
     return
   fi
 
@@ -59,6 +58,7 @@ cleanup() {
     delete from app.import_jobs where id = '${IMPORT_ID}';
   " >/dev/null
 
+  rm -f "${WORKBOOK_PATH}" "${AUTH_JSON}" "${IMPORT_JSON}" "${PUBLISH_JSON}" "${QUERY_JSON}" "${RESTORE_WORKBOOK:-}"
   echo "Smoke import data cleaned up"
 }
 
@@ -153,12 +153,11 @@ import sys
 with open(sys.argv[1], "r", encoding="utf-8") as handle:
     body = json.load(handle)
 
-assert body["item"]["status"] in {"validated", "failed"}
-assert body["item"]["totalRows"] == 2
-assert body["missingColumns"] == []
 print(body["item"]["id"])
 PY
 )"
+
+wait_for_import_validation "${API_URL}" "${ACCESS_TOKEN}" "${IMPORT_ID}" "${IMPORT_JSON}"
 
 curl -sS -X POST "${API_URL}/imports/${IMPORT_ID}/publish" \
   -H "Authorization: Bearer ${ACCESS_TOKEN}" > "${PUBLISH_JSON}"
@@ -180,6 +179,8 @@ with open(sys.argv[3], "r", encoding="utf-8") as handle:
     explorer = json.load(handle)
 
 assert preview["item"]["status"] == "validated", preview
+assert preview["item"]["totalRows"] == 2, preview
+assert preview["missingColumns"] == [], preview
 assert published["item"]["status"] == "published", published
 assert explorer["result"]["total"] == 2, explorer
 

@@ -50,6 +50,7 @@ npm run test-server:dev
 
 This uses dedicated ports so it does not collide with the other Supabase-based test project on the machine. The generated local Supabase keys are written to `.env.test-server.local`.
 The first bootstrap also installs the Supabase CLI into the repo-local `.cache/` directory so it does not share a global tool state with other projects on the server.
+The test-server helpers also bring up the local Redis container automatically so the import queue path is available during development.
 If Supabase has not been bootstrapped yet, `npm run test-server:dev` can still start the UI and API on the test-server ports, but sign-in will remain unavailable until provisioning completes.
 
 For the nginx-backed test URL, add a hosts entry on your client machine:
@@ -96,11 +97,12 @@ Use the company admin account created by `npm run bootstrap:supabase` or `npm ru
 - Queue, scheduler, warehouse, and storage primitives are scaffolded in-repo for the next implementation phases
 - The Supabase migration target, rollout order, and schema plan live in `docs/supabase-migration-blueprint.md`
 - The API repository layer now has a Supabase adapter for auth, users, SLAs, alerts, audit, imports, and tenant-scoped analytics reads
+- When Redis is configured, import preview parsing runs asynchronously through the in-repo queue and worker instead of blocking the API upload request
 
 ## Current Limitations
 
 - Some non-critical flows still use lightweight local fallbacks when Supabase is not configured for the environment
-- Worker and scheduler packages are queue-ready scaffolds and do not yet own import execution
+- Import preview generation now runs through the worker when Redis is configured, but publish orchestration still runs in the API and alerts/exports remain scaffold-level queue jobs
 - OIDC/SCIM, dbt execution, observability exporters, and true warehouse promotion are not finished in this pass
 - The Supabase path is implemented and build-verified, but it still needs a live configured project to be exercised end to end
 

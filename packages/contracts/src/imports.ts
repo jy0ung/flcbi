@@ -166,6 +166,25 @@ export interface ParsedWorkbookResult {
   missingColumns: string[];
 }
 
+export interface ParsedWorkbookSummary {
+  totalRows: number;
+  validRows: number;
+  errorRows: number;
+  duplicateRows: number;
+  status: "validated" | "failed";
+}
+
+export function summarizeParsedWorkbook(parsed: ParsedWorkbookResult): ParsedWorkbookSummary {
+  const errorRows = parsed.issues.filter((issue) => issue.severity === "error").length;
+  return {
+    totalRows: parsed.rows.length,
+    validRows: parsed.rows.length - errorRows,
+    errorRows,
+    duplicateRows: parsed.issues.filter((issue) => issue.issueType === "duplicate").length,
+    status: parsed.missingColumns.length > 0 ? "failed" : "validated",
+  };
+}
+
 export function parseWorkbook(file: ArrayBuffer): ParsedWorkbookResult {
   const workbook = xlsxRuntime.read(file, { type: "array", cellDates: true });
   const sheetName = workbook.SheetNames.find((sheet) => sheet.toLowerCase().includes("combine")) ?? workbook.SheetNames[0];

@@ -38,7 +38,7 @@ export default function ImportHistory() {
       />
 
       <div className="glass-panel overflow-hidden">
-        <table className="w-full text-sm">
+        <table className="w-full text-sm" data-testid="import-history-table">
           <thead>
             <tr className="border-b border-border bg-secondary/30 text-left">
               <th className="px-4 py-3 text-xs text-muted-foreground font-medium">File</th>
@@ -60,7 +60,7 @@ export default function ImportHistory() {
               </tr>
             )}
             {importBatches.map(b => (
-              <tr key={b.id} className="data-table-row">
+              <tr key={b.id} className="data-table-row" data-testid="import-history-row">
                 <td className="px-4 py-3 text-primary text-xs font-medium">{b.fileName}</td>
                 <td className="px-4 py-3 text-foreground">{b.uploadedBy}</td>
                 <td className="px-4 py-3 text-foreground text-xs">{new Date(b.uploadedAt).toLocaleString()}</td>

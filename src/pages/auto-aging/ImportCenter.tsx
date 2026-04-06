@@ -1,12 +1,16 @@
-import React, { useState, useCallback } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { PageHeader } from '@/components/shared/PageHeader';
 import { StatusBadge } from '@/components/shared/StatusBadge';
 import { Button } from '@/components/ui/button';
 import { Upload, FileSpreadsheet, CheckCircle, AlertTriangle, Download, Loader2 } from 'lucide-react';
-import { useCreateImport, usePublishImport } from '@/hooks/api/use-platform';
+import { useCreateImport, useImport, usePublishImport } from '@/hooks/api/use-platform';
 import type { DataQualityIssue, ImportBatch, ImportPublishMode } from '@flcbi/contracts';
 
 type Step = 'upload' | 'validating' | 'review' | 'publishing' | 'done';
+
+function isValidationPending(status?: ImportBatch['status']) {
+  return status === 'uploaded' || status === 'validating' || status === 'normalization_in_progress';
+}
 
 const publishModeOptions: Array<{
   value: ImportPublishMode;
@@ -37,37 +41,100 @@ export default function ImportCenter() {
   const [error, setError] = useState('');
   const [autoPublishAttempted, setAutoPublishAttempted] = useState(false);
   const [publishMode, setPublishMode] = useState<ImportPublishMode>('replace');
+  const [awaitingValidation, setAwaitingValidation] = useState(false);
+  const autoPublishImportIdRef = useRef<string | null>(null);
+  const polledImport = useImport(batchId, awaitingValidation);
+
+  const publishValidatedImport = useCallback((detail: { item: ImportBatch }) => {
+    if (autoPublishImportIdRef.current === detail.item.id) {
+      return;
+    }
+
+    autoPublishImportIdRef.current = detail.item.id;
+    setAutoPublishAttempted(true);
+    setStep('publishing');
+    setError('');
+    void publishImport.mutateAsync({ id: detail.item.id, mode: publishMode }).then((published) => {
+      setPreview((currentPreview) => currentPreview ? { ...currentPreview, item: published.item } : currentPreview);
+      setAwaitingValidation(false);
+      setStep('done');
+    }).catch((mutationError) => {
+      setAwaitingValidation(false);
+      setStep('review');
+      setError(mutationError instanceof Error ? mutationError.message : 'Failed to publish import');
+    });
+  }, [publishImport, publishMode]);
+
+  const applyImportDetail = useCallback((detail: { item: ImportBatch; previewIssues: DataQualityIssue[]; missingColumns: string[]; previewRows: number }) => {
+    setPreview(detail);
+    setBatchId(detail.item.id);
+    setValidationIssues(detail.previewIssues);
+    setMissingCols(detail.missingColumns);
+
+    if (isValidationPending(detail.item.status)) {
+      setAwaitingValidation(true);
+      setStep('validating');
+      return;
+    }
+
+    setAwaitingValidation(false);
+    if (detail.item.status === 'failed') {
+      if (!detail.item.previewAvailable && detail.previewIssues.length === 0 && detail.missingColumns.length === 0) {
+        setError('The worker could not finish validating this workbook. Please retry the upload.');
+      }
+      setStep('review');
+      return;
+    }
+
+    if (detail.missingColumns.length > 0) {
+      setStep('review');
+      return;
+    }
+
+    setError('');
+    publishValidatedImport(detail);
+  }, [publishValidatedImport]);
 
   const handleFileDrop = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    let attemptedPublish = false;
     setError('');
     setFileName(file.name);
     setStep('validating');
+    setPreview(null);
+    setValidationIssues([]);
+    setMissingCols([]);
+    setBatchId('');
+    setAwaitingValidation(false);
     setAutoPublishAttempted(false);
+    autoPublishImportIdRef.current = null;
     try {
       const response = await createImport.mutateAsync(file);
-      setPreview(response);
-      setBatchId(response.item.id);
-      setValidationIssues(response.previewIssues);
-      setMissingCols(response.missingColumns);
-      if (response.missingColumns.length > 0) {
-        setStep('review');
-        return;
-      }
-
-      attemptedPublish = true;
-      setAutoPublishAttempted(true);
-      setStep('publishing');
-      const published = await publishImport.mutateAsync({ id: response.item.id, mode: publishMode });
-      setPreview((currentPreview) => currentPreview ? { ...currentPreview, item: published.item } : currentPreview);
-      setStep('done');
+      applyImportDetail(response);
     } catch (mutationError) {
-      setStep(attemptedPublish ? 'review' : 'upload');
+      setAwaitingValidation(false);
+      setStep('upload');
       setError(mutationError instanceof Error ? mutationError.message : 'Failed to process workbook');
     }
-  }, [createImport, publishImport, publishMode]);
+  }, [applyImportDetail, createImport]);
+
+  useEffect(() => {
+    if (!polledImport.data) {
+      return;
+    }
+
+    applyImportDetail(polledImport.data);
+  }, [applyImportDetail, polledImport.data]);
+
+  useEffect(() => {
+    if (!awaitingValidation || !polledImport.error) {
+      return;
+    }
+
+    setAwaitingValidation(false);
+    setStep('upload');
+    setError(polledImport.error instanceof Error ? polledImport.error.message : 'Failed to refresh import validation status');
+  }, [awaitingValidation, polledImport.error]);
 
   const handlePublish = useCallback(() => {
     setStep('publishing');
@@ -89,8 +156,10 @@ export default function ImportCenter() {
     setFileName('');
     setError('');
     setBatchId('');
+    setAwaitingValidation(false);
     setAutoPublishAttempted(false);
     setPublishMode('replace');
+    autoPublishImportIdRef.current = null;
   };
 
   return (
@@ -184,7 +253,14 @@ export default function ImportCenter() {
       {step === 'validating' && (
         <div className="glass-panel p-12 text-center">
           <Loader2 className="h-10 w-10 text-primary mx-auto mb-4 animate-spin" />
-          <p className="text-foreground font-medium">Validating {fileName}...</p>
+          <p className="text-foreground font-medium">
+            {preview?.item.status === 'uploaded' ? `Queued ${fileName} for validation...` : `Validating ${fileName}...`}
+          </p>
+          <p className="text-sm text-muted-foreground mt-1">
+            {preview?.item.status === 'uploaded'
+              ? 'The worker is downloading and parsing the workbook in the background.'
+              : 'Checking workbook headers, normalizing rows, and preparing the preview.'}
+          </p>
         </div>
       )}
 
@@ -211,6 +287,15 @@ export default function ImportCenter() {
             {missingCols.length > 0 && (
               <div className="p-3 rounded-md bg-destructive/10 border border-destructive/20 mb-4">
                 <p className="text-sm text-destructive font-medium">Missing required columns: {missingCols.join(', ')}</p>
+              </div>
+            )}
+
+            {preview?.item.status === 'failed' && missingCols.length === 0 && validationIssues.length === 0 && (
+              <div className="p-3 rounded-md bg-destructive/10 border border-destructive/20 mb-4">
+                <p className="text-sm text-destructive font-medium">Validation could not complete for this workbook.</p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  The worker stopped before a preview could be prepared. Retry the upload after checking the file.
+                </p>
               </div>
             )}
 
@@ -267,7 +352,10 @@ export default function ImportCenter() {
             </div>
 
             <div className="flex gap-2">
-              <Button onClick={handlePublish} disabled={missingCols.length > 0}>
+              <Button
+                onClick={handlePublish}
+                disabled={missingCols.length > 0 || !preview || preview.item.status === 'failed' || isValidationPending(preview.item.status)}
+              >
                 <CheckCircle className="h-4 w-4 mr-1" />Publish Canonical Data
               </Button>
               <Button variant="outline" onClick={reset}>Cancel</Button>

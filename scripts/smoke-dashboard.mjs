@@ -1,8 +1,48 @@
 import { chromium } from "../node_modules/playwright/index.mjs";
+import { existsSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
 
-const email = process.env.FLCBI_SMOKE_EMAIL ?? "admin@flcbi.local";
-const password = process.env.FLCBI_SMOKE_PASSWORD ?? "fIxqgKfaeUbQhXsCvUZHdznc";
-const baseUrl = process.env.FLCBI_SMOKE_BASE_URL ?? "http://127.0.0.1:18133";
+const rootDir = resolve(import.meta.dirname, "..");
+
+function parseEnvFile(filePath) {
+  if (!existsSync(filePath)) {
+    return {};
+  }
+
+  const entries = {};
+  for (const line of readFileSync(filePath, "utf8").split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) {
+      continue;
+    }
+
+    const separatorIndex = trimmed.indexOf("=");
+    if (separatorIndex === -1) {
+      continue;
+    }
+
+    const key = trimmed.slice(0, separatorIndex).trim();
+    let value = trimmed.slice(separatorIndex + 1).trim();
+    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+      value = value.slice(1, -1);
+    }
+    entries[key] = value;
+  }
+
+  return entries;
+}
+
+const smokeEnv = {
+  ...parseEnvFile(resolve(rootDir, ".env.test-server")),
+  ...parseEnvFile(resolve(rootDir, ".env.test-server.local")),
+  ...process.env,
+};
+
+const email = process.env.FLCBI_SMOKE_EMAIL ?? smokeEnv.BOOTSTRAP_ADMIN_EMAIL ?? "admin@flcbi.local";
+const password = process.env.FLCBI_SMOKE_PASSWORD ?? smokeEnv.BOOTSTRAP_ADMIN_PASSWORD ?? "apple2";
+const baseUrl =
+  process.env.FLCBI_SMOKE_BASE_URL ??
+  `http://127.0.0.1:${smokeEnv.VITE_PORT ?? "18133"}`;
 
 function assert(condition, message) {
   if (!condition) {
@@ -67,9 +107,19 @@ async function restoreMetricBoard(page, metricIds) {
   }
 
   await page.getByRole("button", { name: "Save Board" }).click();
-  await page.waitForTimeout(1200);
+  let restoredMetricIds = new Set();
+  const restoreDeadline = Date.now() + 20000;
+  while (Date.now() < restoreDeadline) {
+    await page.waitForTimeout(500);
+    restoredMetricIds = new Set(await readMetricCardIds(page));
+    if (
+      restoredMetricIds.size === targetMetricIds.size &&
+      [...targetMetricIds].every((metricId) => restoredMetricIds.has(metricId))
+    ) {
+      return;
+    }
+  }
 
-  const restoredMetricIds = new Set(await readMetricCardIds(page));
   assert(restoredMetricIds.size === targetMetricIds.size, "Metric board restore changed the card count");
   for (const metricId of targetMetricIds) {
     assert(restoredMetricIds.has(metricId), `Metric board restore missed ${metricId}`);
@@ -163,6 +213,24 @@ try {
   assert(explorerUrl.searchParams.get("payment") === chosenPayment, "Payment filter not carried into explorer");
   assert(explorerUrl.searchParams.get("preset") === "registered_pending_delivery", "Preset not carried into explorer");
 
+  console.log("step: import-history");
+  await page.goto("/auto-aging/history", { waitUntil: "domcontentloaded" });
+  await page.getByRole("heading", { name: "Import History" }).waitFor({ timeout: 15000 });
+  await page.getByTestId("import-history-table").waitFor({ timeout: 15000 });
+  const importHistoryRows = page.getByTestId("import-history-row");
+  assert(await importHistoryRows.count() >= 1, "Import history did not render any rows");
+
+  console.log("step: notifications");
+  await page.goto("/notifications", { waitUntil: "domcontentloaded" });
+  await page.getByRole("heading", { name: "Notifications" }).waitFor({ timeout: 15000 });
+  const notificationsList = page.getByTestId("notifications-list");
+  await notificationsList.waitFor({ timeout: 15000 });
+  const notificationItems = page.getByTestId("notification-item");
+  const emptyState = page.getByTestId("notifications-empty");
+  const totalNotifications = await notificationItems.count();
+  const hasEmptyState = await emptyState.count();
+  assert(totalNotifications > 0 || hasEmptyState > 0, "Notifications page rendered neither items nor empty state");
+
   console.log(JSON.stringify({
     status: "ok",
     chosenBranch,
@@ -170,6 +238,8 @@ try {
     initialCardCount,
     dashboardUrl: dashboardUrl.toString(),
     explorerUrl: explorerUrl.toString(),
+    importHistoryRows: await importHistoryRows.count(),
+    notificationsRendered: totalNotifications,
   }, null, 2));
 } finally {
   if (initialMetricIds.length > 0) {

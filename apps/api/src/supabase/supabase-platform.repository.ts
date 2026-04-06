@@ -20,6 +20,7 @@ import {
   parseWorkbook,
   publishCanonical,
   queryVehicles,
+  summarizeParsedWorkbook,
   type AppRole,
   type AlertRule,
   type AuditEvent,
@@ -45,6 +46,7 @@ import type {
   PlatformRoleDefinition,
   VehicleDetail,
 } from "../platform/platform.repository.js";
+import { ImportQueueService } from "../queues/import-queue.service.js";
 import { SupabaseAdminService } from "./supabase-admin.service.js";
 import {
   toContractUser,
@@ -105,6 +107,7 @@ interface ImportJobRow {
   valid_rows: number;
   error_rows: number;
   duplicate_rows: number;
+  missing_columns: string[] | null;
   published_at: string | null;
   preview_available: boolean | null;
   dataset_version_id: string | null;
@@ -241,6 +244,7 @@ export class SupabasePlatformRepository implements PlatformRepository {
   constructor(
     @Inject(SupabaseAdminService) private readonly supabase: SupabaseAdminService,
     @Inject(PlatformStoreService) private readonly fallback: PlatformStoreService,
+    @Inject(ImportQueueService) private readonly importQueue: ImportQueueService,
   ) {}
 
   async findUserByEmail(email: string) {
@@ -713,7 +717,7 @@ export class SupabasePlatformRepository implements PlatformRepository {
     const { data, error } = await client
       .schema("app")
       .from("import_jobs")
-      .select("id, file_name, uploaded_by, created_at, status, total_rows, valid_rows, error_rows, duplicate_rows, published_at, preview_available, dataset_version_id, publish_mode, storage_path")
+      .select("id, file_name, uploaded_by, created_at, status, total_rows, valid_rows, error_rows, duplicate_rows, missing_columns, published_at, preview_available, dataset_version_id, publish_mode, storage_path")
       .eq("id", id)
       .eq("company_id", companyId)
       .maybeSingle();
@@ -731,7 +735,7 @@ export class SupabasePlatformRepository implements PlatformRepository {
     return {
       item,
       previewIssues,
-      missingColumns: preview?.missingColumns ?? [],
+      missingColumns: preview?.missingColumns ?? (data?.missing_columns ?? []),
       previewRows: preview?.rows.length ?? item.totalRows,
     };
   }
@@ -743,14 +747,6 @@ export class SupabasePlatformRepository implements PlatformRepository {
 
     const client = this.supabase.getAdminClient();
     const companyId = this.requireCompanyId(user);
-    const branchIdByCode = await this.fetchBranchIdByCode(companyId);
-    const parsed = parseWorkbook(
-      fileBuffer.buffer.slice(
-        fileBuffer.byteOffset,
-        fileBuffer.byteOffset + fileBuffer.byteLength,
-      ),
-    );
-
     const id = randomUUID();
     const storagePath = `${companyId}/imports/${id}/${fileName}`;
     const uploadResult = await client.storage
@@ -774,39 +770,51 @@ export class SupabasePlatformRepository implements PlatformRepository {
         uploaded_by: dbUserId,
         file_name: fileName,
         storage_path: storagePath,
-        status: parsed.missingColumns.length > 0 ? "failed" : "validated",
-        total_rows: parsed.rows.length,
-        valid_rows: parsed.rows.length - parsed.issues.filter((issue) => issue.severity === "error").length,
-        error_rows: parsed.issues.filter((issue) => issue.severity === "error").length,
-        duplicate_rows: parsed.issues.filter((issue) => issue.issueType === "duplicate").length,
-        preview_available: true,
+        status: "uploaded",
+        missing_columns: [],
+        preview_available: false,
       })
-      .select("id, file_name, uploaded_by, created_at, status, total_rows, valid_rows, error_rows, duplicate_rows, published_at, preview_available, dataset_version_id, publish_mode, storage_path")
+      .select("id, file_name, uploaded_by, created_at, status, total_rows, valid_rows, error_rows, duplicate_rows, missing_columns, published_at, preview_available, dataset_version_id, publish_mode, storage_path")
       .single();
 
     if (error || !data) {
       throw new InternalServerErrorException(error?.message ?? "Failed to create import job");
     }
 
-    await this.persistRawImportRows(companyId, id, parsed.rows, branchIdByCode);
-    await this.replaceImportIssues(companyId, id, parsed.issues, branchIdByCode, parsed.rows, null);
-
-    this.importPreviews.set(id, parsed);
     await this.addAuditEvent({
       action: "import_uploaded",
       entity: "import_batch",
       entityId: id,
       userId: user.id,
       userName: user.name,
-      details: `Uploaded ${fileName} with ${parsed.rows.length} parsed rows`,
+      details: `Uploaded ${fileName}`,
     });
 
-    const [item] = await this.mapImportRows([data as ImportJobRow]);
+    if (this.importQueue.isConfigured()) {
+      try {
+        await this.importQueue.enqueueImportPreview({ importId: id });
+        const [item] = await this.mapImportRows([data as ImportJobRow]);
+        return {
+          item,
+          previewIssues: [],
+          missingColumns: [],
+          previewRows: 0,
+        };
+      } catch (queueError) {
+        const message = queueError instanceof Error ? queueError.message : String(queueError);
+        this.logger.warn(`Import queue enqueue failed for ${id}, falling back to inline validation: ${message}`);
+      }
+    }
+
+    const processed = await this.processUploadedImportPreview(companyId, id, fileBuffer);
+    this.importPreviews.set(id, processed.parsed);
+
+    const [item] = await this.mapImportRows([processed.importRow]);
     return {
       item,
-      previewIssues: parsed.issues,
-      missingColumns: parsed.missingColumns,
-      previewRows: parsed.rows.length,
+      previewIssues: processed.parsed.issues,
+      missingColumns: processed.parsed.missingColumns,
+      previewRows: processed.parsed.rows.length,
     };
   }
 
@@ -823,7 +831,7 @@ export class SupabasePlatformRepository implements PlatformRepository {
     const { data: importJob, error: importJobError } = await client
       .schema("app")
       .from("import_jobs")
-      .select("id, file_name, uploaded_by, created_at, status, total_rows, valid_rows, error_rows, duplicate_rows, published_at, preview_available, dataset_version_id, publish_mode, storage_path")
+      .select("id, file_name, uploaded_by, created_at, status, total_rows, valid_rows, error_rows, duplicate_rows, missing_columns, published_at, preview_available, dataset_version_id, publish_mode, storage_path")
       .eq("company_id", companyId)
       .eq("id", id)
       .maybeSingle();
@@ -1357,7 +1365,7 @@ export class SupabasePlatformRepository implements PlatformRepository {
     const { data, error } = await client
       .schema("app")
       .from("import_jobs")
-      .select("id, file_name, uploaded_by, created_at, status, total_rows, valid_rows, error_rows, duplicate_rows, published_at, preview_available, dataset_version_id, publish_mode, storage_path")
+      .select("id, file_name, uploaded_by, created_at, status, total_rows, valid_rows, error_rows, duplicate_rows, missing_columns, published_at, preview_available, dataset_version_id, publish_mode, storage_path")
       .eq("company_id", companyId)
       .order("created_at", { ascending: false });
 
@@ -1510,6 +1518,32 @@ export class SupabasePlatformRepository implements PlatformRepository {
     }
 
     return ((data ?? []) as RawImportRow[]).map((row) => this.mapRawImportRow(row));
+  }
+
+  private async processUploadedImportPreview(companyId: string, importId: string, fileBuffer: Buffer) {
+    const branchIdByCode = await this.fetchBranchIdByCode(companyId);
+    const parsed = parseWorkbook(
+      fileBuffer.buffer.slice(
+        fileBuffer.byteOffset,
+        fileBuffer.byteOffset + fileBuffer.byteLength,
+      ),
+    );
+
+    try {
+      await this.clearImportPreviewArtifacts(companyId, importId);
+      await this.persistRawImportRows(companyId, importId, parsed.rows, branchIdByCode);
+      await this.replaceImportIssues(companyId, importId, parsed.issues, branchIdByCode, parsed.rows, null);
+      const importRow = await this.updateImportPreviewJob(companyId, importId, parsed);
+      return { parsed, importRow };
+    } catch (error) {
+      await this.runBestEffort(`import_preview_cleanup:${importId}`, async () => {
+        await this.clearImportPreviewArtifacts(companyId, importId);
+      });
+      await this.runBestEffort(`import_preview_mark_failed:${importId}`, async () => {
+        await this.markImportPreviewFailed(companyId, importId);
+      });
+      throw error;
+    }
   }
 
   private async fetchDashboardPreferencesRow(user: User) {
@@ -1853,6 +1887,80 @@ export class SupabasePlatformRepository implements PlatformRepository {
       if (error) {
         throw new InternalServerErrorException(error.message);
       }
+    }
+  }
+
+  private async clearImportPreviewArtifacts(companyId: string, importId: string) {
+    const client = this.supabase.getAdminClient();
+    const { error: deleteRawError } = await client
+      .schema("raw")
+      .from("vehicle_import_rows")
+      .delete()
+      .eq("company_id", companyId)
+      .eq("import_job_id", importId);
+
+    if (deleteRawError) {
+      throw new InternalServerErrorException(deleteRawError.message);
+    }
+
+    const { error: deleteIssuesError } = await client
+      .schema("app")
+      .from("quality_issues")
+      .delete()
+      .eq("company_id", companyId)
+      .eq("import_job_id", importId);
+
+    if (deleteIssuesError) {
+      throw new InternalServerErrorException(deleteIssuesError.message);
+    }
+  }
+
+  private async updateImportPreviewJob(companyId: string, importId: string, parsed: ImportPreview) {
+    const summary = summarizeParsedWorkbook(parsed);
+    const client = this.supabase.getAdminClient();
+    const { data, error } = await client
+      .schema("app")
+      .from("import_jobs")
+      .update({
+        status: summary.status,
+        total_rows: summary.totalRows,
+        valid_rows: summary.validRows,
+        error_rows: summary.errorRows,
+        duplicate_rows: summary.duplicateRows,
+        missing_columns: parsed.missingColumns,
+        preview_available: true,
+      })
+      .eq("company_id", companyId)
+      .eq("id", importId)
+      .select("id, file_name, uploaded_by, created_at, status, total_rows, valid_rows, error_rows, duplicate_rows, missing_columns, published_at, preview_available, dataset_version_id, publish_mode, storage_path")
+      .single();
+
+    if (error || !data) {
+      throw new InternalServerErrorException(error?.message ?? "Failed to update import preview");
+    }
+
+    return data as ImportJobRow;
+  }
+
+  private async markImportPreviewFailed(companyId: string, importId: string) {
+    const client = this.supabase.getAdminClient();
+    const { error } = await client
+      .schema("app")
+      .from("import_jobs")
+      .update({
+        status: "failed",
+        total_rows: 0,
+        valid_rows: 0,
+        error_rows: 0,
+        duplicate_rows: 0,
+        preview_available: false,
+        missing_columns: [],
+      })
+      .eq("company_id", companyId)
+      .eq("id", importId);
+
+    if (error) {
+      throw new InternalServerErrorException(error.message);
     }
   }
 

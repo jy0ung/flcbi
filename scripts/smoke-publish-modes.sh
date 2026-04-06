@@ -121,11 +121,22 @@ import sys
 with open(sys.argv[1], "r", encoding="utf-8") as handle:
     body = json.load(handle)
 
-assert body["missingColumns"] == [], body
-assert body["item"]["status"] == "validated", body
 print(body["item"]["id"])
 PY
   )"
+
+  wait_for_import_validation "${API_URL}" "${ACCESS_TOKEN}" "${import_id}" "${import_json}"
+
+  python3 - "${import_json}" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    body = json.load(handle)
+
+assert body["missingColumns"] == [], body
+assert body["item"]["status"] == "validated", body
+PY
 
   curl -fsS -X POST "${API_URL}/imports/${import_id}/publish" \
     -H "Authorization: Bearer ${ACCESS_TOKEN}" \

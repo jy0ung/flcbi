@@ -4,10 +4,16 @@ import type {
   ExecutiveDashboardMetricId,
   ExplorerPreset,
   ExplorerQueryRequest,
+  ImportBatch,
+  ImportDetailResponse,
   NotificationsResponse,
   UpdateAlertRequest,
 } from "@flcbi/contracts";
 import { apiClient } from "@/lib/api-client";
+
+function isImportPending(status?: ImportBatch["status"]) {
+  return status === "uploaded" || status === "validating" || status === "normalization_in_progress" || status === "publish_in_progress";
+}
 
 export function useNavigationItems(enabled = true) {
   return useQuery({
@@ -96,6 +102,22 @@ export function useImports(enabled = true) {
     queryKey: ["imports"],
     queryFn: () => apiClient.getImports(),
     enabled,
+    refetchInterval: (query) => {
+      const imports = query.state.data?.items ?? [];
+      return imports.some((item) => isImportPending(item.status)) ? 1500 : false;
+    },
+  });
+}
+
+export function useImport(importId?: string, enabled = true) {
+  return useQuery({
+    queryKey: ["imports", importId],
+    queryFn: () => apiClient.getImport(importId!),
+    enabled: enabled && Boolean(importId),
+    refetchInterval: (query) => {
+      const detail = query.state.data as ImportDetailResponse | undefined;
+      return isImportPending(detail?.item.status) ? 1500 : false;
+    },
   });
 }
 
@@ -103,8 +125,9 @@ export function useCreateImport() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (file: File) => apiClient.createImport(file),
-    onSuccess: () => {
+    onSuccess: (response) => {
       void queryClient.invalidateQueries({ queryKey: ["imports"] });
+      queryClient.setQueryData(["imports", response.item.id], response);
     },
   });
 }
@@ -113,11 +136,17 @@ export function usePublishImport() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: ({ id, mode }: { id: string; mode?: "replace" | "merge" }) => apiClient.publishImport(id, mode),
-    onSuccess: () => {
+    onSuccess: (response, variables) => {
       void queryClient.invalidateQueries({ queryKey: ["imports"] });
+      void queryClient.invalidateQueries({ queryKey: ["imports", variables.id] });
       void queryClient.invalidateQueries({ queryKey: ["aging", "summary"] });
       void queryClient.invalidateQueries({ queryKey: ["aging", "quality"] });
       void queryClient.invalidateQueries({ queryKey: ["aging", "explorer"] });
+      queryClient.setQueryData<ImportDetailResponse | undefined>(["imports", variables.id], (current) => (
+        current
+          ? { ...current, item: response.item }
+          : current
+      ));
     },
   });
 }

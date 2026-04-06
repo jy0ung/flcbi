@@ -1,4 +1,9 @@
 import { Worker } from "bullmq";
+import {
+  IMPORT_PREVIEW_JOB_NAME,
+  IMPORT_QUEUE_NAME,
+} from "@flcbi/contracts";
+import { processImportPreviewJob } from "./import-preview.processor.js";
 
 const redisUrl = process.env.REDIS_URL;
 
@@ -11,10 +16,13 @@ const connection = { url: redisUrl };
 
 const workers = [
   new Worker(
-    "imports",
+    IMPORT_QUEUE_NAME,
     async (job) => {
       console.log(`Processing import job ${job.id}`, job.data);
-      return { ok: true };
+      if (job.name === IMPORT_PREVIEW_JOB_NAME) {
+        return processImportPreviewJob(job);
+      }
+      return { ok: true, skipped: true, reason: `unsupported job ${job.name}` };
     },
     { connection },
   ),
