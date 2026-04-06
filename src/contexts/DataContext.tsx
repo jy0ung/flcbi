@@ -8,12 +8,12 @@ const STORAGE_KEYS = {
   qualityIssues: 'flc_bi_quality_issues',
 } as const;
 
-function loadFromStorage<T>(key: string, fallback: T): T {
+function loadFromStorage<T extends unknown[]>(key: string, fallback: T): T {
   try {
     const raw = localStorage.getItem(key);
     if (raw) {
       const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed as T;
     }
   } catch { /* ignore corrupt data */ }
   return fallback;
