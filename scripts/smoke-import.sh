@@ -4,6 +4,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "${ROOT_DIR}/scripts/_test_server_env.sh"
+source "${ROOT_DIR}/scripts/_smoke_restore.sh"
 
 API_URL="${SMOKE_API_URL:-http://127.0.0.1:${API_PORT}/v1}"
 SUPABASE_AUTH_URL="${SMOKE_SUPABASE_AUTH_URL:-http://127.0.0.1:${SUPABASE_API_PORT}/auth/v1}"
@@ -12,10 +13,6 @@ ADMIN_EMAIL="${SMOKE_ADMIN_EMAIL:-${BOOTSTRAP_ADMIN_EMAIL}}"
 ADMIN_PASSWORD="${SMOKE_ADMIN_PASSWORD:-${BOOTSTRAP_ADMIN_PASSWORD:-}}"
 ANON_KEY="${VITE_SUPABASE_ANON_KEY:-${SUPABASE_ANON_KEY:-}}"
 KEEP_DATA="${SMOKE_IMPORT_KEEP_DATA:-false}"
-PREVIOUS_IMPORT_ID="$(
-  docker exec "${SUPABASE_DB_CONTAINER}" psql -U postgres -d postgres -At -c \
-    "select import_job_id from app.vehicle_records limit 1;" 2>/dev/null | head -n 1
-)"
 
 if [[ -z "${ADMIN_PASSWORD}" ]]; then
   echo "Missing bootstrap admin password in environment." >&2
@@ -34,12 +31,24 @@ PUBLISH_JSON="$(mktemp)"
 QUERY_JSON="$(mktemp)"
 IMPORT_ID=""
 ACCESS_TOKEN=""
+RESTORE_WORKBOOK="$(mktemp --suffix=.xlsx)"
+RESTORE_READY=false
+
+if snapshot_active_dataset_workbook "${RESTORE_WORKBOOK}" "${SUPABASE_DB_CONTAINER}"; then
+  RESTORE_READY=true
+else
+  RESTORE_WORKBOOK=""
+fi
 
 cleanup() {
-  rm -f "${WORKBOOK_PATH}" "${AUTH_JSON}" "${IMPORT_JSON}" "${PUBLISH_JSON}" "${QUERY_JSON}"
+  rm -f "${WORKBOOK_PATH}" "${AUTH_JSON}" "${IMPORT_JSON}" "${PUBLISH_JSON}" "${QUERY_JSON}" "${RESTORE_WORKBOOK:-}"
 
   if [[ -z "${IMPORT_ID}" || "${KEEP_DATA}" == "true" ]]; then
     return
+  fi
+
+  if [[ "${RESTORE_READY}" == "true" && -n "${ACCESS_TOKEN}" ]]; then
+    restore_dataset_from_workbook "${API_URL}" "${ACCESS_TOKEN}" "${RESTORE_WORKBOOK}" "smoke-import-restore.xlsx" "replace" >/dev/null
   fi
 
   docker exec "${SUPABASE_DB_CONTAINER}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c "
@@ -49,13 +58,6 @@ cleanup() {
     delete from app.dataset_versions where import_job_id = '${IMPORT_ID}';
     delete from app.import_jobs where id = '${IMPORT_ID}';
   " >/dev/null
-
-  if [[ -n "${PREVIOUS_IMPORT_ID}" && -n "${ACCESS_TOKEN}" ]]; then
-    curl -fsS -X POST "${API_URL}/imports/${PREVIOUS_IMPORT_ID}/publish" \
-      -H "Authorization: Bearer ${ACCESS_TOKEN}" \
-      -H "Content-Type: application/json" \
-      -d '{"mode":"replace"}' >/dev/null
-  fi
 
   echo "Smoke import data cleaned up"
 }

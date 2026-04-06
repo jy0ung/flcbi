@@ -77,6 +77,25 @@ export class SupabaseAdminService {
     });
   }
 
+  async checkHealth() {
+    if (!this.isConfigured()) {
+      return "not_configured" as const;
+    }
+
+    try {
+      const client = this.getAdminClient();
+      const { error } = await client
+        .schema("app")
+        .from("companies")
+        .select("id")
+        .limit(1);
+
+      return error ? "down" as const : "up" as const;
+    } catch {
+      return "down" as const;
+    }
+  }
+
   getImportBucket() {
     return process.env.SUPABASE_STORAGE_IMPORT_BUCKET ?? "flcbi-imports";
   }

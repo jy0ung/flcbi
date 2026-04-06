@@ -61,6 +61,12 @@ export interface PlatformRepository {
   deleteUser(user: User, targetUserId: string): Awaitable<void>;
   listAlerts(user: User): Awaitable<AlertRule[]>;
   createAlert(user: User, input: Omit<AlertRule, "id" | "createdBy" | "companyId">): Awaitable<AlertRule>;
+  updateAlert(
+    user: User,
+    alertId: string,
+    input: Partial<Omit<AlertRule, "id" | "createdBy" | "companyId">>,
+  ): Awaitable<AlertRule>;
+  deleteAlert(user: User, alertId: string): Awaitable<void>;
   listImports(user: User): Awaitable<ImportBatch[]>;
   getImportById(user: User, id: string): Awaitable<ImportDetail>;
   createImportPreview(user: User, fileName: string, fileBuffer: Buffer): Awaitable<ImportDetail>;
@@ -76,4 +82,6 @@ export interface PlatformRepository {
   queryExplorer(user: User, query: ExplorerQuery): Awaitable<ExplorerResult>;
   getVehicle(user: User, chassisNo: string): Awaitable<VehicleDetail>;
   getQualityIssues(user: User): Awaitable<DataQualityIssue[]>;
+  markNotificationRead(user: User, notificationId: string): Awaitable<void>;
+  markAllNotificationsRead(user: User): Awaitable<void>;
 }

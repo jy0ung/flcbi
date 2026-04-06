@@ -102,6 +102,80 @@ export function createDefaultDashboardPreferences(): DashboardPreferences {
   };
 }
 
+export function getExecutiveDashboardMetricOption(metricId: ExecutiveDashboardMetricId) {
+  return EXECUTIVE_DASHBOARD_METRIC_OPTIONS.find((metric) => metric.id === metricId);
+}
+
+export function getExecutiveMetricValue(summary: AgingSummary, metricId: ExecutiveDashboardMetricId): number {
+  switch (metricId) {
+    case "open_stock":
+      return summary.stockSnapshot.openStock;
+    case "pending_shipment":
+      return summary.stockSnapshot.pendingShipment;
+    case "in_transit":
+      return summary.stockSnapshot.inTransit;
+    case "at_outlet":
+      return summary.stockSnapshot.atOutlet;
+    case "registered_pending_delivery":
+      return summary.stockSnapshot.registeredPendingDelivery;
+    case "pending_disbursement":
+      return summary.stockSnapshot.deliveredPendingDisbursement;
+    case "disbursed":
+      return summary.stockSnapshot.disbursed;
+    case "tracked_units":
+      return summary.totalVehicles;
+    case "import_batches":
+      return summary.importCount;
+    case "sla_breaches":
+      return summary.totalOverdue;
+    case "quality_issues":
+      return summary.totalIssues;
+    case "aged_30_plus":
+      return summary.stockSnapshot.aged30Plus;
+    case "aged_60_plus":
+      return summary.stockSnapshot.aged60Plus;
+    case "aged_90_plus":
+      return summary.stockSnapshot.aged90Plus;
+    case "d2d_open":
+      return summary.stockSnapshot.d2dOpenTransfers;
+    case "bg_to_delivery_median":
+      return summary.kpiSummaries.find((kpi) => kpi.kpiId === "bg_to_delivery")?.median ?? 0;
+    case "bg_to_shipment_etd_median":
+      return summary.kpiSummaries.find((kpi) => kpi.kpiId === "bg_to_shipment_etd")?.median ?? 0;
+    case "etd_to_outlet_median":
+      return summary.kpiSummaries.find((kpi) => kpi.kpiId === "etd_to_outlet")?.median ?? 0;
+    case "outlet_to_reg_median":
+      return summary.kpiSummaries.find((kpi) => kpi.kpiId === "outlet_to_reg")?.median ?? 0;
+    case "reg_to_delivery_median":
+      return summary.kpiSummaries.find((kpi) => kpi.kpiId === "reg_to_delivery")?.median ?? 0;
+    case "bg_to_disb_median":
+      return summary.kpiSummaries.find((kpi) => kpi.kpiId === "bg_to_disb")?.median ?? 0;
+    case "delivery_to_disb_median":
+      return summary.kpiSummaries.find((kpi) => kpi.kpiId === "delivery_to_disb")?.median ?? 0;
+    default:
+      return 0;
+  }
+}
+
+export function compareMetricValue(
+  value: number,
+  comparator: "gt" | "gte" | "lt" | "lte",
+  threshold: number,
+): boolean {
+  switch (comparator) {
+    case "gt":
+      return value > threshold;
+    case "gte":
+      return value >= threshold;
+    case "lt":
+      return value < threshold;
+    case "lte":
+      return value <= threshold;
+    default:
+      return false;
+  }
+}
+
 export const platformModules: PlatformModule[] = [
   {
     id: "auto-aging",
@@ -138,6 +212,13 @@ export const navigationItems: NavigationItem[] = [
   { label: "Executive Dashboard", path: "/", icon: "LayoutDashboard", section: "Platform" },
   { label: "Module Directory", path: "/modules", icon: "Grid3X3", section: "Platform" },
   { label: "Notifications", path: "/notifications", icon: "Bell", section: "Platform" },
+  {
+    label: "Alert Rules",
+    path: "/alerts",
+    icon: "AlertTriangle",
+    section: "Platform",
+    roles: ["super_admin", "company_admin", "director"],
+  },
   { label: "Aging Dashboard", path: "/auto-aging", icon: "Timer", section: "Auto Aging" },
   { label: "Vehicle Explorer", path: "/auto-aging/vehicles", icon: "Car", section: "Auto Aging" },
   {

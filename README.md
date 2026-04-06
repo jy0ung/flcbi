@@ -99,7 +99,7 @@ Use the company admin account created by `npm run bootstrap:supabase` or `npm ru
 
 ## Current Limitations
 
-- Notifications and some non-critical flows still use a lightweight in-memory fallback until their Supabase tables are modeled
+- Some non-critical flows still use lightweight local fallbacks when Supabase is not configured for the environment
 - Worker and scheduler packages are queue-ready scaffolds and do not yet own import execution
 - OIDC/SCIM, dbt execution, observability exporters, and true warehouse promotion are not finished in this pass
 - The Supabase path is implemented and build-verified, but it still needs a live configured project to be exercised end to end

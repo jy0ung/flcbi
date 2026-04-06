@@ -13,6 +13,7 @@ import LoginPage from "@/pages/LoginPage";
 import ExecutiveDashboard from "@/pages/ExecutiveDashboard";
 import ModuleDirectory from "@/pages/ModuleDirectory";
 import Notifications from "@/pages/Notifications";
+import Alerts from "@/pages/Alerts";
 import AutoAgingDashboard from "@/pages/auto-aging/AutoAgingDashboard";
 import VehicleExplorer from "@/pages/auto-aging/VehicleExplorer";
 import VehicleDetail from "@/pages/auto-aging/VehicleDetail";
@@ -31,10 +32,16 @@ const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
       retry: (failureCount, error) => {
-        if (error instanceof ApiError && [401, 403, 404].includes(error.status)) {
-          return false;
+        if (error instanceof ApiError) {
+          if (error.isAuthError || error.status === 404) {
+            return false;
+          }
+          return error.isRetryable && failureCount < 1;
         }
 
+        if (error instanceof Error) {
+          return false;
+        }
         return failureCount < 1;
       },
       refetchOnWindowFocus: false,
@@ -70,6 +77,17 @@ function ProtectedRoutes() {
         <Route path="/" element={<ExecutiveDashboard />} />
         <Route path="/modules" element={<ModuleDirectory />} />
         <Route path="/notifications" element={<Notifications />} />
+        <Route
+          path="/alerts"
+          element={(
+            <RoleBoundary
+              roles={["company_admin", "super_admin", "director"]}
+              title="Alert Access Required"
+            >
+              <Alerts />
+            </RoleBoundary>
+          )}
+        />
         <Route path="/profile" element={<SettingsPage />} />
         <Route path="/auto-aging" element={<AutoAgingDashboard />} />
         <Route path="/auto-aging/vehicles" element={<VehicleExplorer />} />

@@ -231,7 +231,7 @@ export interface AuditEvent {
 export interface AlertRule {
   id: string;
   name: string;
-  metricId: string;
+  metricId: ExecutiveDashboardMetricId;
   threshold: number;
   comparator: "gt" | "gte" | "lt" | "lte";
   frequency: "hourly" | "daily" | "weekly";

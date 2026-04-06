@@ -1,5 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { ExecutiveDashboardMetricId, ExplorerPreset, ExplorerQueryRequest } from "@flcbi/contracts";
+import type {
+  CreateAlertRequest,
+  ExecutiveDashboardMetricId,
+  ExplorerPreset,
+  ExplorerQueryRequest,
+  NotificationsResponse,
+  UpdateAlertRequest,
+} from "@flcbi/contracts";
 import { apiClient } from "@/lib/api-client";
 
 export function useNavigationItems(enabled = true) {
@@ -123,11 +130,84 @@ export function useAlerts(enabled = true) {
   });
 }
 
+export function useCreateAlert() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: CreateAlertRequest) => apiClient.createAlert(input),
+    onSuccess: (response) => {
+      queryClient.setQueryData(["alerts"], response);
+      void queryClient.invalidateQueries({ queryKey: ["notifications"] });
+    },
+  });
+}
+
+export function useUpdateAlert() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, input }: { id: string; input: UpdateAlertRequest }) => apiClient.updateAlert(id, input),
+    onSuccess: (response) => {
+      queryClient.setQueryData(["alerts"], response);
+      void queryClient.invalidateQueries({ queryKey: ["notifications"] });
+    },
+  });
+}
+
+export function useDeleteAlert() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => apiClient.deleteAlert(id),
+    onSuccess: (response) => {
+      queryClient.setQueryData(["alerts"], response);
+      void queryClient.invalidateQueries({ queryKey: ["notifications"] });
+    },
+  });
+}
+
 export function useNotifications(enabled = true) {
   return useQuery({
     queryKey: ["notifications"],
     queryFn: () => apiClient.getNotifications(),
     enabled,
+  });
+}
+
+export function useMarkNotificationRead() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => apiClient.markNotificationRead(id),
+    onSuccess: (_response, id) => {
+      queryClient.setQueryData<NotificationsResponse | undefined>(["notifications"], (current) => {
+        if (!current) {
+          return current;
+        }
+
+        return {
+          items: current.items.map((item) => (
+            item.id === id
+              ? { ...item, read: true }
+              : item
+          )),
+        };
+      });
+    },
+  });
+}
+
+export function useMarkAllNotificationsRead() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => apiClient.markAllNotificationsRead(),
+    onSuccess: () => {
+      queryClient.setQueryData<NotificationsResponse | undefined>(["notifications"], (current) => {
+        if (!current) {
+          return current;
+        }
+
+        return {
+          items: current.items.map((item) => ({ ...item, read: true })),
+        };
+      });
+    },
   });
 }
 

@@ -3,9 +3,12 @@ import { randomUUID } from "node:crypto";
 import {
   type AppRole,
   buildAgingSummary,
+  compareMetricValue,
   type Branch,
   createDefaultDashboardPreferences,
   createDefaultSlaPolicies,
+  getExecutiveDashboardMetricOption,
+  getExecutiveMetricValue,
   getPermissionsForUser,
   matchesExplorerPreset,
   navigationItems,
@@ -45,6 +48,7 @@ export class PlatformStoreService implements PlatformRepository {
   private readonly users: User[] = [];
   private readonly modules = [...platformModules];
   private readonly notifications: Notification[] = [];
+  private readonly notificationFingerprints = new Set<string>();
   private readonly alerts: AlertRule[] = [];
   private readonly audits: AuditEvent[] = [];
   private readonly slasByCompany = new Map<string, SlaPolicy[]>();
@@ -75,7 +79,10 @@ export class PlatformStoreService implements PlatformRepository {
   }
 
   getNotifications(user: User): Notification[] {
-    return this.notifications.filter((notification) => notification.userId === user.id);
+    this.syncAlertNotifications(user);
+    return this.notifications
+      .filter((notification) => notification.userId === user.id)
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
   }
 
   listAuditEvents(_user: User) {
@@ -205,7 +212,56 @@ export class PlatformStoreService implements PlatformRepository {
       ...input,
     };
     this.alerts.unshift(alert);
+    this.addAuditEvent({
+      action: "alert_created",
+      entity: "alert_rule",
+      entityId: alert.id,
+      userId: user.id,
+      userName: user.name,
+      details: `Created alert ${alert.name}`,
+    });
+    this.syncAlertNotifications(user);
     return alert;
+  }
+
+  updateAlert(
+    user: User,
+    alertId: string,
+    input: Partial<Omit<AlertRule, "id" | "createdBy" | "companyId">>,
+  ) {
+    const alert = this.alerts.find((candidate) => candidate.id === alertId && candidate.companyId === user.companyId);
+    if (!alert) {
+      throw new NotFoundException(`Alert ${alertId} not found`);
+    }
+
+    Object.assign(alert, input);
+    this.addAuditEvent({
+      action: "alert_updated",
+      entity: "alert_rule",
+      entityId: alert.id,
+      userId: user.id,
+      userName: user.name,
+      details: `Updated alert ${alert.name}`,
+    });
+    this.syncAlertNotifications(user);
+    return alert;
+  }
+
+  deleteAlert(user: User, alertId: string) {
+    const alertIndex = this.alerts.findIndex((candidate) => candidate.id === alertId && candidate.companyId === user.companyId);
+    if (alertIndex < 0) {
+      throw new NotFoundException(`Alert ${alertId} not found`);
+    }
+
+    const [alert] = this.alerts.splice(alertIndex, 1);
+    this.addAuditEvent({
+      action: "alert_deleted",
+      entity: "alert_rule",
+      entityId: alert.id,
+      userId: user.id,
+      userName: user.name,
+      details: `Deleted alert ${alert.name}`,
+    });
   }
 
   listImports(_user: User) {
@@ -292,6 +348,14 @@ export class PlatformStoreService implements PlatformRepository {
       userName: user.name,
       details: `Published ${canonical.length} canonical vehicles from ${item.fileName} using ${mode} mode`,
     });
+    this.addNotification(
+      user.id,
+      `Import published: ${item.fileName}`,
+      `${canonical.length} vehicles are now live in ${mode} mode.`,
+      "success",
+      `import-published:${id}`,
+    );
+    this.syncAlertNotifications(user);
     return item;
   }
 
@@ -384,6 +448,24 @@ export class PlatformStoreService implements PlatformRepository {
     return this.getVisibleQualityIssues(user);
   }
 
+  markNotificationRead(user: User, notificationId: string) {
+    const notification = this.notifications.find(
+      (candidate) => candidate.id === notificationId && candidate.userId === user.id,
+    );
+    if (!notification) {
+      throw new NotFoundException(`Notification ${notificationId} not found`);
+    }
+    notification.read = true;
+  }
+
+  markAllNotificationsRead(user: User) {
+    this.notifications.forEach((notification) => {
+      if (notification.userId === user.id) {
+        notification.read = true;
+      }
+    });
+  }
+
   getPermissionsForUser(user: User) {
     return getPermissionsForUser(user);
   }
@@ -420,6 +502,65 @@ export class PlatformStoreService implements PlatformRepository {
     return this.qualityIssues.filter((issue) => visibleVehicles.has(issue.chassisNo));
   }
 
+  private syncAlertNotifications(user: User) {
+    const enabledAlerts = this.alerts.filter((alert) => alert.companyId === user.companyId && alert.enabled);
+    if (enabledAlerts.length === 0) {
+      return;
+    }
+
+    const visibleVehicles = this.getVisibleVehicles(user);
+    const visibleVehicleIds = new Set(visibleVehicles.map((vehicle) => vehicle.chassis_no));
+    const visibleIssues = this.qualityIssues.filter((issue) => visibleVehicleIds.has(issue.chassisNo));
+    const summary = buildAgingSummary(
+      visibleVehicles,
+      this.getCompanySlas(user.companyId),
+      visibleIssues,
+      this.imports,
+      this.lastRefresh,
+    );
+    const summaryScope = summary.latestImport?.datasetVersionId ?? summary.latestImport?.id ?? summary.lastRefresh;
+
+    enabledAlerts.forEach((alert) => {
+      const value = getExecutiveMetricValue(summary, alert.metricId);
+      if (!compareMetricValue(value, alert.comparator, alert.threshold)) {
+        return;
+      }
+
+      const metric = getExecutiveDashboardMetricOption(alert.metricId);
+      this.addNotification(
+        alert.createdBy,
+        `${alert.name} triggered`,
+        `${metric?.label ?? alert.metricId} is ${value} (${describeComparator(alert.comparator)} ${alert.threshold}).`,
+        "warning",
+        ["alert", alert.id, summaryScope, alert.threshold, alert.comparator, value].join(":"),
+      );
+    });
+  }
+
+  private addNotification(
+    userId: string,
+    title: string,
+    message: string,
+    type: Notification["type"],
+    fingerprint: string,
+  ) {
+    const dedupeKey = `${userId}:${fingerprint}`;
+    if (this.notificationFingerprints.has(dedupeKey)) {
+      return;
+    }
+
+    this.notifications.unshift({
+      id: randomUUID(),
+      userId,
+      title,
+      message,
+      type,
+      read: false,
+      createdAt: new Date().toISOString(),
+    });
+    this.notificationFingerprints.add(dedupeKey);
+  }
+
   private maskVehicle(vehicle: VehicleCanonical | undefined, user: User): VehicleCanonical | undefined {
     if (!vehicle) return undefined;
     if (["super_admin", "company_admin", "director", "analyst", "manager"].includes(user.role)) {
@@ -429,5 +570,20 @@ export class PlatformStoreService implements PlatformRepository {
       ...vehicle,
       customer_name: vehicle.customer_name ? `${vehicle.customer_name.charAt(0)}***` : "Restricted",
     };
+  }
+}
+
+function describeComparator(comparator: AlertRule["comparator"]) {
+  switch (comparator) {
+    case "gt":
+      return "above";
+    case "gte":
+      return "at or above";
+    case "lt":
+      return "below";
+    case "lte":
+      return "at or below";
+    default:
+      return comparator;
   }
 }

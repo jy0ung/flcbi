@@ -4,6 +4,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "${ROOT_DIR}/scripts/_test_server_env.sh"
+source "${ROOT_DIR}/scripts/_smoke_restore.sh"
 
 API_URL="${SMOKE_API_URL:-http://127.0.0.1:${API_PORT}/v1}"
 SUPABASE_AUTH_URL="${SMOKE_SUPABASE_AUTH_URL:-http://127.0.0.1:${SUPABASE_API_PORT}/auth/v1}"
@@ -11,10 +12,6 @@ SUPABASE_DB_CONTAINER="${SUPABASE_DB_CONTAINER:-supabase_db_flcbi}"
 ADMIN_EMAIL="${SMOKE_ADMIN_EMAIL:-${BOOTSTRAP_ADMIN_EMAIL}}"
 ADMIN_PASSWORD="${SMOKE_ADMIN_PASSWORD:-${BOOTSTRAP_ADMIN_PASSWORD:-}}"
 ANON_KEY="${VITE_SUPABASE_ANON_KEY:-${SUPABASE_ANON_KEY:-}}"
-PREVIOUS_IMPORT_ID="$(
-  docker exec "${SUPABASE_DB_CONTAINER}" psql -U postgres -d postgres -At -c \
-    "select import_job_id from app.vehicle_records limit 1;" 2>/dev/null | head -n 1
-)"
 
 if [[ -z "${ADMIN_PASSWORD}" ]]; then
   echo "Missing bootstrap admin password in environment." >&2
@@ -30,7 +27,14 @@ RUN_ID="$(date +%s)"
 PREFIX="MODE-${RUN_ID}"
 AUTH_JSON="$(mktemp)"
 QUERY_JSON="$(mktemp)"
-trap 'rm -f "${AUTH_JSON}" "${QUERY_JSON}" "${WORKBOOK_ONE:-}" "${WORKBOOK_TWO:-}" "${WORKBOOK_THREE:-}"' EXIT
+RESTORE_WORKBOOK="$(mktemp --suffix=.xlsx)"
+RESTORE_READY=false
+
+if snapshot_active_dataset_workbook "${RESTORE_WORKBOOK}" "${SUPABASE_DB_CONTAINER}"; then
+  RESTORE_READY=true
+else
+  RESTORE_WORKBOOK=""
+fi
 
 create_workbook() {
   local path="$1"
@@ -165,6 +169,10 @@ cleanup() {
     return
   fi
 
+  if [[ "${RESTORE_READY}" == "true" && -n "${ACCESS_TOKEN}" ]]; then
+    restore_dataset_from_workbook "${API_URL}" "${ACCESS_TOKEN}" "${RESTORE_WORKBOOK}" "smoke-publish-restore.xlsx" "replace" >/dev/null
+  fi
+
   local joined
   joined="$(printf "'%s'," "${IMPORT_IDS[@]}")"
   joined="${joined%,}"
@@ -175,16 +183,9 @@ cleanup() {
     delete from app.dataset_versions where import_job_id in (${joined});
     delete from app.import_jobs where id in (${joined});
   " >/dev/null
-
-  if [[ -n "${PREVIOUS_IMPORT_ID}" ]]; then
-    curl -fsS -X POST "${API_URL}/imports/${PREVIOUS_IMPORT_ID}/publish" \
-      -H "Authorization: Bearer ${ACCESS_TOKEN}" \
-      -H "Content-Type: application/json" \
-      -d '{"mode":"replace"}' >/dev/null
-  fi
 }
 
-trap 'cleanup; rm -f "${AUTH_JSON}" "${QUERY_JSON}" "${WORKBOOK_ONE:-}" "${WORKBOOK_TWO:-}" "${WORKBOOK_THREE:-}"' EXIT
+trap 'cleanup; rm -f "${AUTH_JSON}" "${QUERY_JSON}" "${WORKBOOK_ONE:-}" "${WORKBOOK_TWO:-}" "${WORKBOOK_THREE:-}" "${RESTORE_WORKBOOK:-}"' EXIT
 
 upload_and_publish "${WORKBOOK_ONE}" "replace"
 TOTAL_AFTER_REPLACE_ONE="$(query_total)"

@@ -3,13 +3,17 @@ import {
   Inject,
   Injectable,
   InternalServerErrorException,
+  Logger,
   NotFoundException,
   UnauthorizedException,
 } from "@nestjs/common";
 import {
   buildAgingSummary,
+  compareMetricValue,
   type Branch,
   createDefaultDashboardPreferences,
+  getExecutiveDashboardMetricOption,
+  getExecutiveMetricValue,
   matchesExplorerPreset,
   navigationItems,
   normalizeExecutiveDashboardMetricIds,
@@ -56,14 +60,28 @@ interface ImportPreview {
 interface AlertRow {
   id: string;
   name: string;
-  metric_id: string;
-  threshold: number;
+  metric_id: AlertRule["metricId"];
+  threshold: number | string;
   comparator: AlertRule["comparator"];
   frequency: AlertRule["frequency"];
   enabled: boolean;
   channel: AlertRule["channel"];
   created_by: string | null;
   company_id: string;
+}
+
+interface NotificationRow {
+  id: string;
+  company_id: string;
+  user_id: string;
+  alert_rule_id: string | null;
+  title: string;
+  message: string;
+  type: Notification["type"];
+  read: boolean;
+  fingerprint: string;
+  metadata: Record<string, string | number | boolean | null> | null;
+  created_at: string;
 }
 
 interface AuditRow {
@@ -179,8 +197,45 @@ interface BranchRow {
   name: string;
 }
 
+interface PublishVehicleRow {
+  branch_id: string | null;
+  chassis_no: string;
+  model: string;
+  payment_method: string;
+  salesman_name: string;
+  customer_name: string;
+  is_d2d: boolean;
+  bg_date: string | null;
+  shipment_etd_pkg: string | null;
+  shipment_eta: string | null;
+  date_received_by_outlet: string | null;
+  reg_date: string | null;
+  delivery_date: string | null;
+  disb_date: string | null;
+  bg_to_delivery: number | null;
+  bg_to_shipment_etd: number | null;
+  etd_to_outlet_received: number | null;
+  outlet_received_to_reg: number | null;
+  reg_to_delivery: number | null;
+  etd_to_eta: number | null;
+  eta_to_outlet_received: number | null;
+  outlet_received_to_delivery: number | null;
+  bg_to_disb: number | null;
+  delivery_to_disb: number | null;
+}
+
+interface PublishQualityIssueRow {
+  branch_id: string | null;
+  chassis_no: string | null;
+  field: string;
+  issue_type: DataQualityIssue["issueType"];
+  message: string;
+  severity: DataQualityIssue["severity"];
+}
+
 @Injectable()
 export class SupabasePlatformRepository implements PlatformRepository {
+  private readonly logger = new Logger(SupabasePlatformRepository.name);
   private readonly importPreviews = new Map<string, ImportPreview>();
 
   constructor(
@@ -211,7 +266,13 @@ export class SupabasePlatformRepository implements PlatformRepository {
   }
 
   async getNotifications(user: User): Promise<Notification[]> {
-    return this.fallback.getNotifications(user);
+    if (!this.supabase.isConfigured()) {
+      return this.fallback.getNotifications(user);
+    }
+
+    await this.syncAlertNotificationsSafely(user, "notifications_list");
+    const rows = await this.fetchNotificationRows(user);
+    return rows.map((row) => this.mapNotificationRow(row));
   }
 
   async listAuditEvents(user: User): Promise<AuditEvent[]> {
@@ -503,31 +564,8 @@ export class SupabasePlatformRepository implements PlatformRepository {
       return this.fallback.listAlerts(user);
     }
 
-    const companyId = this.requireCompanyId(user);
-    const client = this.supabase.getAdminClient();
-    const { data, error } = await client
-      .schema("app")
-      .from("alert_rules")
-      .select("id, name, metric_id, threshold, comparator, frequency, enabled, channel, created_by, company_id")
-      .eq("company_id", companyId)
-      .order("created_at", { ascending: false });
-
-    if (error) {
-      throw new InternalServerErrorException(error.message);
-    }
-
-    return ((data ?? []) as AlertRow[]).map((row) => ({
-      id: row.id,
-      name: row.name,
-      metricId: row.metric_id,
-      threshold: Number(row.threshold),
-      comparator: row.comparator,
-      frequency: row.frequency,
-      enabled: row.enabled,
-      channel: row.channel,
-      createdBy: row.created_by ?? "system",
-      companyId: row.company_id,
-    }));
+    const rows = await this.fetchAlertRows(this.requireCompanyId(user));
+    return rows.map((row) => this.mapAlertRow(row));
   }
 
   async createAlert(user: User, input: Omit<AlertRule, "id" | "createdBy" | "companyId">): Promise<AlertRule> {
@@ -544,7 +582,7 @@ export class SupabasePlatformRepository implements PlatformRepository {
       .insert({
         company_id: companyId,
         created_by: dbUserId,
-        name: input.name,
+        name: input.name.trim(),
         metric_id: input.metricId,
         threshold: input.threshold,
         comparator: input.comparator,
@@ -559,18 +597,101 @@ export class SupabasePlatformRepository implements PlatformRepository {
       throw new InternalServerErrorException(error?.message ?? "Failed to create alert");
     }
 
-    return {
-      id: data.id,
-      name: data.name,
-      metricId: data.metric_id,
-      threshold: Number(data.threshold),
-      comparator: data.comparator,
-      frequency: data.frequency,
-      enabled: data.enabled,
-      channel: data.channel,
-      createdBy: user.id,
-      companyId,
+    await this.addAuditEvent({
+      action: "alert_created",
+      entity: "alert_rule",
+      entityId: data.id,
+      userId: user.id,
+      userName: user.name,
+      details: `Created alert ${data.name}`,
+    });
+    await this.syncAlertNotificationsSafely(user, "alert_create");
+    return this.mapAlertRow(data as AlertRow);
+  }
+
+  async updateAlert(
+    user: User,
+    alertId: string,
+    input: Partial<Omit<AlertRule, "id" | "createdBy" | "companyId">>,
+  ): Promise<AlertRule> {
+    if (!this.supabase.isConfigured()) {
+      return this.fallback.updateAlert(user, alertId, input);
+    }
+
+    const companyId = this.requireCompanyId(user);
+    const existing = await this.fetchAlertRow(companyId, alertId);
+    if (!existing) {
+      throw new NotFoundException(`Alert ${alertId} not found`);
+    }
+
+    const updatePayload = {
+      name: input.name !== undefined ? input.name.trim() : existing.name,
+      metric_id: input.metricId ?? existing.metric_id,
+      threshold: input.threshold ?? existing.threshold,
+      comparator: input.comparator ?? existing.comparator,
+      frequency: input.frequency ?? existing.frequency,
+      enabled: input.enabled ?? existing.enabled,
+      channel: input.channel ?? existing.channel,
     };
+
+    const client = this.supabase.getAdminClient();
+    const { data, error } = await client
+      .schema("app")
+      .from("alert_rules")
+      .update(updatePayload)
+      .eq("id", alertId)
+      .eq("company_id", companyId)
+      .select("id, name, metric_id, threshold, comparator, frequency, enabled, channel, created_by, company_id")
+      .single();
+
+    if (error || !data) {
+      throw new InternalServerErrorException(error?.message ?? "Failed to update alert");
+    }
+
+    await this.addAuditEvent({
+      action: "alert_updated",
+      entity: "alert_rule",
+      entityId: alertId,
+      userId: user.id,
+      userName: user.name,
+      details: `Updated alert ${data.name}`,
+    });
+    await this.syncAlertNotificationsSafely(user, "alert_update");
+    return this.mapAlertRow(data as AlertRow);
+  }
+
+  async deleteAlert(user: User, alertId: string): Promise<void> {
+    if (!this.supabase.isConfigured()) {
+      this.fallback.deleteAlert(user, alertId);
+      return;
+    }
+
+    const companyId = this.requireCompanyId(user);
+    const existing = await this.fetchAlertRow(companyId, alertId);
+    if (!existing) {
+      throw new NotFoundException(`Alert ${alertId} not found`);
+    }
+
+    const client = this.supabase.getAdminClient();
+    const { error } = await client
+      .schema("app")
+      .from("alert_rules")
+      .delete()
+      .eq("id", alertId)
+      .eq("company_id", companyId);
+
+    if (error) {
+      throw new InternalServerErrorException(error.message);
+    }
+
+    await this.addAuditEvent({
+      action: "alert_deleted",
+      entity: "alert_rule",
+      entityId: alertId,
+      userId: user.id,
+      userName: user.name,
+      details: `Deleted alert ${existing.name}`,
+    });
   }
 
   async listImports(user: User): Promise<ImportBatch[]> {
@@ -695,7 +816,6 @@ export class SupabasePlatformRepository implements PlatformRepository {
     }
 
     const client = this.supabase.getAdminClient();
-    const datasetVersionId = randomUUID();
     const dbUserId = await this.resolveDbUserIdFromUser(user);
     const companyId = this.requireCompanyId(user);
     const now = new Date().toISOString();
@@ -703,7 +823,7 @@ export class SupabasePlatformRepository implements PlatformRepository {
     const { data: importJob, error: importJobError } = await client
       .schema("app")
       .from("import_jobs")
-      .select("id, status")
+      .select("id, file_name, uploaded_by, created_at, status, total_rows, valid_rows, error_rows, duplicate_rows, published_at, preview_available, dataset_version_id, publish_mode, storage_path")
       .eq("company_id", companyId)
       .eq("id", id)
       .maybeSingle();
@@ -714,9 +834,6 @@ export class SupabasePlatformRepository implements PlatformRepository {
     if (!importJob) {
       throw new NotFoundException(`Import ${id} not found`);
     }
-    if (importJob.status === "failed") {
-      throw new BadRequestException("Import validation failed. Upload a corrected workbook before publishing.");
-    }
 
     const preview = this.importPreviews.get(id);
     const previewRows = preview?.rows ?? await this.fetchPersistedRawRows(companyId, id);
@@ -724,23 +841,6 @@ export class SupabasePlatformRepository implements PlatformRepository {
 
     if (previewRows.length === 0) {
       throw new NotFoundException(`Import ${id} preview is no longer available`);
-    }
-
-    const { error: datasetError } = await client
-      .schema("app")
-      .from("dataset_versions")
-      .insert({
-        id: datasetVersionId,
-        company_id: companyId,
-        import_job_id: id,
-        status: "active",
-        published_by: dbUserId,
-        published_at: now,
-        freshness_at: now,
-      });
-
-    if (datasetError) {
-      throw new InternalServerErrorException(datasetError.message);
     }
 
     const { canonical, issues } = publishCanonical(
@@ -752,115 +852,71 @@ export class SupabasePlatformRepository implements PlatformRepository {
     const branchIdByChassis = new Map(
       canonical.map((vehicle) => [vehicle.chassis_no, branchIdByCode.get(vehicle.branch_code) ?? null]),
     );
-
-    const vehiclePayload = canonical.map((vehicle) => ({
-      company_id: companyId,
-      branch_id: branchIdByCode.get(vehicle.branch_code) ?? null,
-      dataset_version_id: datasetVersionId,
-      import_job_id: id,
-      source_row_id: null,
-      chassis_no: vehicle.chassis_no,
-      model: vehicle.model,
-      payment_method: vehicle.payment_method,
-      salesman_name: vehicle.salesman_name,
-      customer_name: vehicle.customer_name,
-      is_d2d: vehicle.is_d2d,
-      bg_date: vehicle.bg_date ?? null,
-      shipment_etd_pkg: vehicle.shipment_etd_pkg ?? null,
-      shipment_eta: vehicle.shipment_eta_kk_twu_sdk ?? null,
-      date_received_by_outlet: vehicle.date_received_by_outlet ?? null,
-      reg_date: vehicle.reg_date ?? null,
-      delivery_date: vehicle.delivery_date ?? null,
-      disb_date: vehicle.disb_date ?? null,
-      bg_to_delivery: vehicle.bg_to_delivery ?? null,
-      bg_to_shipment_etd: vehicle.bg_to_shipment_etd ?? null,
-      etd_to_outlet_received: vehicle.etd_to_outlet_received ?? null,
-      outlet_received_to_reg: vehicle.outlet_received_to_reg ?? null,
-      reg_to_delivery: vehicle.reg_to_delivery ?? null,
-      etd_to_eta: vehicle.etd_to_eta ?? null,
-      eta_to_outlet_received: vehicle.eta_to_outlet_received ?? null,
-      outlet_received_to_delivery: vehicle.outlet_received_to_delivery ?? null,
-      bg_to_disb: vehicle.bg_to_disb ?? null,
-      delivery_to_disb: vehicle.delivery_to_disb ?? null,
-    }));
-
-    if (vehiclePayload.length > 0) {
-      for (const chunk of chunkArray(vehiclePayload, 500)) {
-        const { error: vehicleError } = await client
-          .schema("app")
-          .from("vehicle_records")
-          .upsert(chunk, { onConflict: "company_id,chassis_no" });
-
-        if (vehicleError) {
-          throw new InternalServerErrorException(vehicleError.message);
-        }
-      }
-    }
-
-    if (mode === "replace") {
-      const { error: deleteStaleError } = await client
-        .schema("app")
-        .from("vehicle_records")
-        .delete()
-        .eq("company_id", companyId)
-        .neq("dataset_version_id", datasetVersionId);
-
-      if (deleteStaleError) {
-        throw new InternalServerErrorException(deleteStaleError.message);
-      }
-
-      const { error: supersedeError } = await client
-        .schema("app")
-        .from("dataset_versions")
-        .update({ status: "superseded" })
-        .eq("company_id", companyId)
-        .neq("id", datasetVersionId)
-        .eq("status", "active");
-
-      if (supersedeError) {
-        throw new InternalServerErrorException(supersedeError.message);
-      }
-    }
-
-    await this.replaceImportIssues(
-      companyId,
-      id,
+    const vehiclePayload = this.buildPublishVehicleRows(canonical, branchIdByCode);
+    const qualityIssuePayload = this.buildPublishQualityIssueRows(
       [...previewIssues, ...issues],
-      branchIdByCode,
-      previewRows,
-      datasetVersionId,
       branchIdByChassis,
     );
 
-    const { data: importRow, error: importError } = await client
+    const { data: datasetVersionId, error: publishError } = await client
       .schema("app")
-      .from("import_jobs")
-      .update({
-        status: "published",
-        published_at: now,
-        dataset_version_id: datasetVersionId,
-        publish_mode: mode,
-        preview_available: false,
-      })
-      .eq("id", id)
-      .select("id, file_name, uploaded_by, created_at, status, total_rows, valid_rows, error_rows, duplicate_rows, published_at, preview_available, dataset_version_id, publish_mode, storage_path")
-      .single();
+      .rpc("publish_import_atomic", {
+        p_company_id: companyId,
+        p_import_job_id: id,
+        p_published_by: dbUserId,
+        p_published_at: now,
+        p_publish_mode: mode,
+        p_vehicle_rows: vehiclePayload,
+        p_quality_issues: qualityIssuePayload,
+      });
 
-    if (importError || !importRow) {
-      throw new InternalServerErrorException(importError?.message ?? "Failed to publish import");
+    if (publishError || !datasetVersionId) {
+      throw this.mapPublishImportError(publishError);
     }
 
-    await this.addAuditEvent({
-      action: "import_published",
-      entity: "import_batch",
-      entityId: id,
-      userId: user.id,
-      userName: user.name,
-      details: `Published ${canonical.length} canonical vehicles from ${importRow.file_name} using ${mode} mode`,
-    });
+    const importRow: ImportJobRow = {
+      ...(importJob as ImportJobRow),
+      status: "published",
+      published_at: now,
+      dataset_version_id: String(datasetVersionId),
+      publish_mode: mode,
+      preview_available: false,
+    };
 
     this.importPreviews.delete(id);
-    const [item] = await this.mapImportRows([importRow as ImportJobRow]);
+
+    await this.runBestEffort("import_publish_audit", async () => {
+      await this.addAuditEvent({
+        action: "import_published",
+        entity: "import_batch",
+        entityId: id,
+        userId: user.id,
+        userName: user.name,
+        details: `Published ${canonical.length} canonical vehicles from ${importRow.file_name} using ${mode} mode`,
+      });
+    });
+
+    if (dbUserId) {
+      await this.runBestEffort("import_publish_notification", async () => {
+        await this.createNotification({
+          companyId,
+          userId: dbUserId,
+          title: `Import published: ${importRow.file_name}`,
+          message: `${canonical.length} vehicles are now live in ${mode} mode.`,
+          type: "success",
+          fingerprint: `import-published:${id}:${mode}`,
+          metadata: {
+            importId: id,
+            datasetVersionId: String(datasetVersionId),
+            publishMode: mode,
+            canonicalCount: canonical.length,
+          },
+        });
+      });
+    }
+    await this.syncAlertNotificationsSafely(user, "import_publish");
+
+    const [item] = await this.mapImportRows([importRow]);
     return item;
   }
 
@@ -1064,6 +1120,63 @@ export class SupabasePlatformRepository implements PlatformRepository {
       severity: row.severity,
       importBatchId: row.import_job_id,
     }));
+  }
+
+  async markNotificationRead(user: User, notificationId: string): Promise<void> {
+    if (!this.supabase.isConfigured()) {
+      this.fallback.markNotificationRead(user, notificationId);
+      return;
+    }
+
+    const companyId = this.requireCompanyId(user);
+    const dbUserId = await this.resolveDbUserIdFromUser(user);
+    if (!dbUserId) {
+      throw new NotFoundException(`Notification ${notificationId} not found`);
+    }
+
+    const client = this.supabase.getAdminClient();
+    const { data, error } = await client
+      .schema("app")
+      .from("notifications")
+      .update({ read: true })
+      .eq("id", notificationId)
+      .eq("company_id", companyId)
+      .eq("user_id", dbUserId)
+      .select("id")
+      .maybeSingle();
+
+    if (error) {
+      throw new InternalServerErrorException(error.message);
+    }
+    if (!data) {
+      throw new NotFoundException(`Notification ${notificationId} not found`);
+    }
+  }
+
+  async markAllNotificationsRead(user: User): Promise<void> {
+    if (!this.supabase.isConfigured()) {
+      this.fallback.markAllNotificationsRead(user);
+      return;
+    }
+
+    const companyId = this.requireCompanyId(user);
+    const dbUserId = await this.resolveDbUserIdFromUser(user);
+    if (!dbUserId) {
+      return;
+    }
+
+    const client = this.supabase.getAdminClient();
+    const { error } = await client
+      .schema("app")
+      .from("notifications")
+      .update({ read: true })
+      .eq("company_id", companyId)
+      .eq("user_id", dbUserId)
+      .eq("read", false);
+
+    if (error) {
+      throw new InternalServerErrorException(error.message);
+    }
   }
 
   private async fetchProfileByEmail(email: string) {
@@ -1426,6 +1539,156 @@ export class SupabasePlatformRepository implements PlatformRepository {
     return (data as SavedViewRow | null) ?? null;
   }
 
+  private async fetchNotificationRows(user: User): Promise<NotificationRow[]> {
+    const companyId = this.requireCompanyId(user);
+    const dbUserId = await this.resolveDbUserIdFromUser(user);
+    if (!dbUserId) {
+      return [];
+    }
+
+    const client = this.supabase.getAdminClient();
+    const { data, error } = await client
+      .schema("app")
+      .from("notifications")
+      .select("id, company_id, user_id, alert_rule_id, title, message, type, read, fingerprint, metadata, created_at")
+      .eq("company_id", companyId)
+      .eq("user_id", dbUserId)
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      throw new InternalServerErrorException(error.message);
+    }
+
+    return (data ?? []) as NotificationRow[];
+  }
+
+  private mapNotificationRow(row: NotificationRow): Notification {
+    return {
+      id: row.id,
+      userId: row.user_id,
+      title: row.title,
+      message: row.message,
+      type: row.type,
+      read: row.read,
+      createdAt: row.created_at,
+    };
+  }
+
+  private async fetchAlertRows(companyId: string): Promise<AlertRow[]> {
+    const client = this.supabase.getAdminClient();
+    const { data, error } = await client
+      .schema("app")
+      .from("alert_rules")
+      .select("id, name, metric_id, threshold, comparator, frequency, enabled, channel, created_by, company_id")
+      .eq("company_id", companyId)
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      throw new InternalServerErrorException(error.message);
+    }
+
+    return (data ?? []) as AlertRow[];
+  }
+
+  private async fetchAlertRow(companyId: string, alertId: string): Promise<AlertRow | null> {
+    const client = this.supabase.getAdminClient();
+    const { data, error } = await client
+      .schema("app")
+      .from("alert_rules")
+      .select("id, name, metric_id, threshold, comparator, frequency, enabled, channel, created_by, company_id")
+      .eq("company_id", companyId)
+      .eq("id", alertId)
+      .maybeSingle();
+
+    if (error) {
+      throw new InternalServerErrorException(error.message);
+    }
+
+    return (data as AlertRow | null) ?? null;
+  }
+
+  private mapAlertRow(row: AlertRow): AlertRule {
+    return {
+      id: row.id,
+      name: row.name,
+      metricId: row.metric_id,
+      threshold: Number(row.threshold),
+      comparator: row.comparator,
+      frequency: row.frequency,
+      enabled: row.enabled,
+      channel: row.channel,
+      createdBy: row.created_by ?? "system",
+      companyId: row.company_id,
+    };
+  }
+
+  private buildPublishVehicleRows(
+    canonical: VehicleCanonical[],
+    branchIdByCode: Map<string, string>,
+  ): PublishVehicleRow[] {
+    return canonical.map((vehicle) => ({
+      branch_id: branchIdByCode.get(vehicle.branch_code) ?? null,
+      chassis_no: vehicle.chassis_no,
+      model: vehicle.model,
+      payment_method: vehicle.payment_method,
+      salesman_name: vehicle.salesman_name,
+      customer_name: vehicle.customer_name,
+      is_d2d: vehicle.is_d2d,
+      bg_date: vehicle.bg_date ?? null,
+      shipment_etd_pkg: vehicle.shipment_etd_pkg ?? null,
+      shipment_eta: vehicle.shipment_eta_kk_twu_sdk ?? null,
+      date_received_by_outlet: vehicle.date_received_by_outlet ?? null,
+      reg_date: vehicle.reg_date ?? null,
+      delivery_date: vehicle.delivery_date ?? null,
+      disb_date: vehicle.disb_date ?? null,
+      bg_to_delivery: vehicle.bg_to_delivery ?? null,
+      bg_to_shipment_etd: vehicle.bg_to_shipment_etd ?? null,
+      etd_to_outlet_received: vehicle.etd_to_outlet_received ?? null,
+      outlet_received_to_reg: vehicle.outlet_received_to_reg ?? null,
+      reg_to_delivery: vehicle.reg_to_delivery ?? null,
+      etd_to_eta: vehicle.etd_to_eta ?? null,
+      eta_to_outlet_received: vehicle.eta_to_outlet_received ?? null,
+      outlet_received_to_delivery: vehicle.outlet_received_to_delivery ?? null,
+      bg_to_disb: vehicle.bg_to_disb ?? null,
+      delivery_to_disb: vehicle.delivery_to_disb ?? null,
+    }));
+  }
+
+  private buildPublishQualityIssueRows(
+    issues: DataQualityIssue[],
+    branchIdByChassis: Map<string, string | null>,
+  ): PublishQualityIssueRow[] {
+    return issues.map((issue) => ({
+      branch_id: branchIdByChassis.get(issue.chassisNo) ?? null,
+      chassis_no: issue.chassisNo || null,
+      field: issue.field,
+      issue_type: issue.issueType,
+      message: issue.message,
+      severity: issue.severity,
+    }));
+  }
+
+  private mapPublishImportError(error: { message: string } | null): Error {
+    if (!error) {
+      return new InternalServerErrorException("Failed to publish import");
+    }
+
+    const message = error.message || "Failed to publish import";
+    if (message.includes("not found")) {
+      return new NotFoundException(message);
+    }
+    if (
+      message.includes("already") ||
+      message.includes("validation failed") ||
+      message.includes("not ready") ||
+      message.includes("Unsupported publish mode") ||
+      message.includes("No canonical vehicle rows")
+    ) {
+      return new BadRequestException(message);
+    }
+    return new InternalServerErrorException(message);
+  }
+
   private async fetchVisibleVehicles(
     user: User,
     filters?: { branch?: string; model?: string; payment?: string; preset?: ExplorerPreset },
@@ -1646,6 +1909,97 @@ export class SupabasePlatformRepository implements PlatformRepository {
       }
     }
   }
+
+  private async createNotification(input: {
+    companyId: string;
+    userId: string;
+    title: string;
+    message: string;
+    type: Notification["type"];
+    fingerprint: string;
+    metadata?: Record<string, string | number | boolean | null>;
+    alertRuleId?: string | null;
+  }) {
+    const client = this.supabase.getAdminClient();
+    const { error } = await client
+      .schema("app")
+      .from("notifications")
+      .upsert({
+        company_id: input.companyId,
+        user_id: input.userId,
+        alert_rule_id: input.alertRuleId ?? null,
+        title: input.title,
+        message: input.message,
+        type: input.type,
+        read: false,
+        fingerprint: input.fingerprint,
+        metadata: input.metadata ?? {},
+      }, {
+        onConflict: "user_id,fingerprint",
+        ignoreDuplicates: true,
+      });
+
+    if (error) {
+      throw new InternalServerErrorException(error.message);
+    }
+  }
+
+  private async syncAlertNotifications(user: User) {
+    const companyId = this.requireCompanyId(user);
+    const alertRows = await this.fetchAlertRows(companyId);
+    const enabledAlerts = alertRows
+      .map((row) => this.mapAlertRow(row))
+      .filter((alert) => alert.enabled);
+
+    if (enabledAlerts.length === 0) {
+      return;
+    }
+
+    const summary = await this.getSummary(user);
+    const summaryScope = summary.latestImport?.datasetVersionId ?? summary.latestImport?.id ?? summary.lastRefresh;
+
+    for (const alert of enabledAlerts) {
+      if (!alert.createdBy || alert.createdBy === "system") {
+        continue;
+      }
+
+      const value = getExecutiveMetricValue(summary, alert.metricId);
+      if (!compareMetricValue(value, alert.comparator, alert.threshold)) {
+        continue;
+      }
+
+      const metric = getExecutiveDashboardMetricOption(alert.metricId);
+      await this.createNotification({
+        companyId,
+        userId: alert.createdBy,
+        title: `${alert.name} triggered`,
+        message: `${metric?.label ?? alert.metricId} is ${value} (${describeComparator(alert.comparator)} ${alert.threshold}).`,
+        type: "warning",
+        fingerprint: ["alert", alert.id, summaryScope, alert.threshold, alert.comparator, value].join(":"),
+        alertRuleId: alert.id,
+        metadata: {
+          metricId: alert.metricId,
+          value,
+          threshold: alert.threshold,
+        },
+      });
+    }
+  }
+
+  private async syncAlertNotificationsSafely(user: User, reason: string) {
+    await this.runBestEffort(`alert_notification_sync:${reason}`, async () => {
+      await this.syncAlertNotifications(user);
+    });
+  }
+
+  private async runBestEffort(label: string, action: () => Promise<void>) {
+    try {
+      await action();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn(`${label} failed: ${message}`);
+    }
+  }
 }
 
 function chunkArray<T>(items: T[], chunkSize: number) {
@@ -1654,4 +2008,19 @@ function chunkArray<T>(items: T[], chunkSize: number) {
     chunks.push(items.slice(index, index + chunkSize));
   }
   return chunks;
+}
+
+function describeComparator(comparator: AlertRule["comparator"]) {
+  switch (comparator) {
+    case "gt":
+      return "above";
+    case "gte":
+      return "at or above";
+    case "lt":
+      return "below";
+    case "lte":
+      return "at or below";
+    default:
+      return comparator;
+  }
 }

@@ -1,5 +1,6 @@
 import { Injectable } from "@nestjs/common";
-import { mkdir, writeFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import { access, mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 @Injectable()
@@ -14,5 +15,18 @@ export class ObjectStorageService {
       key,
       path: fullPath,
     };
+  }
+
+  async checkHealth() {
+    const healthPath = join(process.cwd(), this.baseDir, ".healthcheck");
+    try {
+      await mkdir(dirname(healthPath), { recursive: true });
+      await writeFile(healthPath, "ok");
+      await access(healthPath, constants.R_OK | constants.W_OK);
+      await rm(healthPath, { force: true });
+      return "up" as const;
+    } catch {
+      return "down" as const;
+    }
   }
 }

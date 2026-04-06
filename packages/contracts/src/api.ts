@@ -91,8 +91,24 @@ export interface AlertsResponse {
   items: AlertRule[];
 }
 
+export type CreateAlertRequest = Omit<AlertRule, "id" | "createdBy" | "companyId">;
+
+export interface UpdateAlertRequest {
+  name?: string;
+  metricId?: AlertRule["metricId"];
+  threshold?: number;
+  comparator?: AlertRule["comparator"];
+  frequency?: AlertRule["frequency"];
+  enabled?: boolean;
+  channel?: AlertRule["channel"];
+}
+
 export interface NotificationsResponse {
   items: Notification[];
+}
+
+export interface SuccessResponse {
+  success: boolean;
 }
 
 export interface AuditResponse {
