@@ -51,6 +51,7 @@ npm run test-server:dev
 This uses dedicated ports so it does not collide with the other Supabase-based test project on the machine. The generated local Supabase keys are written to `.env.test-server.local`.
 The first bootstrap also installs the Supabase CLI into the repo-local `.cache/` directory so it does not share a global tool state with other projects on the server.
 The test-server helpers also bring up the local Redis container automatically so the import queue path is available during development.
+The test-server Supabase helpers now also apply repo migrations directly to the `flcbi` local database container, so schema changes do not drift to a different local Supabase project when multiple stacks are running on the same machine.
 If Supabase has not been bootstrapped yet, `npm run test-server:dev` can still start the UI and API on the test-server ports, but sign-in will remain unavailable until provisioning completes.
 
 For the nginx-backed test URL, add a hosts entry on your client machine:
@@ -119,6 +120,7 @@ npm run bootstrap:supabase
 npm run test-server:bootstrap
 npm run test-server:dev
 npm run test-server:links
+npm run test-server:supabase:migrate
 npm run smoke:import
 npm run smoke:publish-modes
 npm run generate:import-template

@@ -9,9 +9,8 @@ source "${ROOT_DIR}/scripts/_supabase_cli.sh"
 
 cd "${ROOT_DIR}"
 
-ensure_test_server_queue "${ROOT_DIR}"
 echo "Starting Supabase on dedicated FLC BI ports..."
-supabase_cli start
+bash "${ROOT_DIR}/scripts/test-server-supabase-start.sh"
 
 STATUS_ENV="$(mktemp)"
 trap 'rm -f "${STATUS_ENV}"' EXIT

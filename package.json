@@ -18,6 +18,7 @@
     "test-server:dev": "bash scripts/dev-test-server.sh",
     "test-server:links": "bash scripts/test-server-links.sh",
     "test-server:supabase:start": "bash scripts/test-server-supabase-start.sh",
+    "test-server:supabase:migrate": "bash scripts/test-server-supabase-migrate.sh",
     "test-server:supabase:stop": "bash scripts/test-server-supabase-stop.sh",
     "smoke:import": "bash scripts/smoke-import.sh",
     "smoke:publish-modes": "bash scripts/smoke-publish-modes.sh",
