@@ -11,6 +11,7 @@ import { ImportBatch, VehicleRaw } from '@/types';
 type Step = 'upload' | 'validating' | 'review' | 'publishing' | 'done';
 
 export default function ImportCenter() {
+  const navigate = useNavigate();
   const { addImportBatch, updateImportBatch, setVehicles, addQualityIssues, refreshKpis, vehicles } = useData();
   const [step, setStep] = useState<Step>('upload');
   const [fileName, setFileName] = useState('');
