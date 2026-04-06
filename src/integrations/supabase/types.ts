@@ -14,7 +14,269 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      dashboard_preferences: {
+        Row: {
+          created_at: string
+          id: string
+          selected_kpis: string[]
+          show_advanced_kpis: boolean
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          selected_kpis?: string[]
+          show_advanced_kpis?: boolean
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          selected_kpis?: string[]
+          show_advanced_kpis?: boolean
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      import_batches: {
+        Row: {
+          created_at: string
+          duplicate_rows: number
+          error_rows: number
+          file_name: string
+          id: string
+          published_at: string | null
+          status: string
+          total_rows: number
+          uploaded_at: string
+          uploaded_by: string
+          valid_rows: number
+        }
+        Insert: {
+          created_at?: string
+          duplicate_rows?: number
+          error_rows?: number
+          file_name: string
+          id?: string
+          published_at?: string | null
+          status?: string
+          total_rows?: number
+          uploaded_at?: string
+          uploaded_by: string
+          valid_rows?: number
+        }
+        Update: {
+          created_at?: string
+          duplicate_rows?: number
+          error_rows?: number
+          file_name?: string
+          id?: string
+          published_at?: string | null
+          status?: string
+          total_rows?: number
+          uploaded_at?: string
+          uploaded_by?: string
+          valid_rows?: number
+        }
+        Relationships: []
+      }
+      quality_issues: {
+        Row: {
+          chassis_no: string
+          created_at: string
+          field: string
+          id: string
+          import_batch_id: string | null
+          issue_type: string
+          message: string
+          severity: string
+        }
+        Insert: {
+          chassis_no: string
+          created_at?: string
+          field: string
+          id?: string
+          import_batch_id?: string | null
+          issue_type: string
+          message: string
+          severity?: string
+        }
+        Update: {
+          chassis_no?: string
+          created_at?: string
+          field?: string
+          id?: string
+          import_batch_id?: string | null
+          issue_type?: string
+          message?: string
+          severity?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "quality_issues_import_batch_id_fkey"
+            columns: ["import_batch_id"]
+            isOneToOne: false
+            referencedRelation: "import_batches"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      sla_policies: {
+        Row: {
+          company_id: string
+          created_at: string
+          id: string
+          kpi_id: string
+          label: string
+          sla_days: number
+          updated_at: string
+        }
+        Insert: {
+          company_id?: string
+          created_at?: string
+          id?: string
+          kpi_id: string
+          label: string
+          sla_days: number
+          updated_at?: string
+        }
+        Update: {
+          company_id?: string
+          created_at?: string
+          id?: string
+          kpi_id?: string
+          label?: string
+          sla_days?: number
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      vehicles: {
+        Row: {
+          bg_date: string | null
+          bg_to_delivery: number | null
+          bg_to_disb: number | null
+          bg_to_shipment_etd: number | null
+          branch_code: string
+          chassis_no: string
+          contra_sola: string | null
+          created_at: string
+          customer_name: string
+          date_received_by_outlet: string | null
+          dealer_transfer_price: string | null
+          delivery_date: string | null
+          delivery_to_disb: number | null
+          disb_date: string | null
+          etd_to_outlet: number | null
+          full_payment_date: string | null
+          full_payment_type: string | null
+          id: string
+          import_batch_id: string | null
+          invoice_no: string | null
+          is_d2d: boolean
+          lou: string | null
+          model: string
+          obr: string | null
+          outlet_to_reg: number | null
+          payment_method: string
+          reg_date: string | null
+          reg_no: string | null
+          reg_to_delivery: number | null
+          remark: string | null
+          salesman_name: string
+          shipment_eta_kk_twu_sdk: string | null
+          shipment_etd_pkg: string | null
+          shipment_name: string | null
+          source_row_id: string | null
+          updated_at: string
+          vaa_date: string | null
+          variant: string | null
+        }
+        Insert: {
+          bg_date?: string | null
+          bg_to_delivery?: number | null
+          bg_to_disb?: number | null
+          bg_to_shipment_etd?: number | null
+          branch_code?: string
+          chassis_no: string
+          contra_sola?: string | null
+          created_at?: string
+          customer_name?: string
+          date_received_by_outlet?: string | null
+          dealer_transfer_price?: string | null
+          delivery_date?: string | null
+          delivery_to_disb?: number | null
+          disb_date?: string | null
+          etd_to_outlet?: number | null
+          full_payment_date?: string | null
+          full_payment_type?: string | null
+          id?: string
+          import_batch_id?: string | null
+          invoice_no?: string | null
+          is_d2d?: boolean
+          lou?: string | null
+          model?: string
+          obr?: string | null
+          outlet_to_reg?: number | null
+          payment_method?: string
+          reg_date?: string | null
+          reg_no?: string | null
+          reg_to_delivery?: number | null
+          remark?: string | null
+          salesman_name?: string
+          shipment_eta_kk_twu_sdk?: string | null
+          shipment_etd_pkg?: string | null
+          shipment_name?: string | null
+          source_row_id?: string | null
+          updated_at?: string
+          vaa_date?: string | null
+          variant?: string | null
+        }
+        Update: {
+          bg_date?: string | null
+          bg_to_delivery?: number | null
+          bg_to_disb?: number | null
+          bg_to_shipment_etd?: number | null
+          branch_code?: string
+          chassis_no?: string
+          contra_sola?: string | null
+          created_at?: string
+          customer_name?: string
+          date_received_by_outlet?: string | null
+          dealer_transfer_price?: string | null
+          delivery_date?: string | null
+          delivery_to_disb?: number | null
+          disb_date?: string | null
+          etd_to_outlet?: number | null
+          full_payment_date?: string | null
+          full_payment_type?: string | null
+          id?: string
+          import_batch_id?: string | null
+          invoice_no?: string | null
+          is_d2d?: boolean
+          lou?: string | null
+          model?: string
+          obr?: string | null
+          outlet_to_reg?: number | null
+          payment_method?: string
+          reg_date?: string | null
+          reg_no?: string | null
+          reg_to_delivery?: number | null
+          remark?: string | null
+          salesman_name?: string
+          shipment_eta_kk_twu_sdk?: string | null
+          shipment_etd_pkg?: string | null
+          shipment_name?: string | null
+          source_row_id?: string | null
+          updated_at?: string
+          vaa_date?: string | null
+          variant?: string | null
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
