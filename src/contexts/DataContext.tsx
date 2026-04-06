@@ -1,6 +1,29 @@
-import React, { createContext, useContext, useState, useCallback } from 'react';
+import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
 import { VehicleCanonical, ImportBatch, DataQualityIssue, SlaPolicy, KpiSummary } from '@/types';
 import { demoVehicles, demoImportBatches, demoQualityIssues, demoSLAs, computeKpiSummaries } from '@/data/demo-data';
+
+const STORAGE_KEYS = {
+  vehicles: 'flc_bi_vehicles',
+  importBatches: 'flc_bi_import_batches',
+  qualityIssues: 'flc_bi_quality_issues',
+} as const;
+
+function loadFromStorage<T extends unknown[]>(key: string, fallback: T): T {
+  try {
+    const raw = localStorage.getItem(key);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed as T;
+    }
+  } catch { /* ignore corrupt data */ }
+  return fallback;
+}
+
+function saveToStorage(key: string, data: unknown): void {
+  try {
+    localStorage.setItem(key, JSON.stringify(data));
+  } catch { /* storage full — silent fail */ }
+}
 
 interface DataContextType {
   vehicles: VehicleCanonical[];
@@ -20,12 +43,17 @@ interface DataContextType {
 const DataContext = createContext<DataContextType | null>(null);
 
 export function DataProvider({ children }: { children: React.ReactNode }) {
-  const [vehicles, setVehiclesState] = useState<VehicleCanonical[]>(demoVehicles);
-  const [importBatches, setImportBatches] = useState<ImportBatch[]>(demoImportBatches);
-  const [qualityIssues, setQualityIssues] = useState<DataQualityIssue[]>(demoQualityIssues);
+  const [vehicles, setVehiclesState] = useState<VehicleCanonical[]>(() => loadFromStorage(STORAGE_KEYS.vehicles, demoVehicles));
+  const [importBatches, setImportBatches] = useState<ImportBatch[]>(() => loadFromStorage(STORAGE_KEYS.importBatches, demoImportBatches));
+  const [qualityIssues, setQualityIssues] = useState<DataQualityIssue[]>(() => loadFromStorage(STORAGE_KEYS.qualityIssues, demoQualityIssues));
   const [slas, setSlas] = useState<SlaPolicy[]>(demoSLAs);
-  const [kpiSummaries, setKpiSummaries] = useState<KpiSummary[]>(() => computeKpiSummaries(demoVehicles, demoSLAs));
+  const [kpiSummaries, setKpiSummaries] = useState<KpiSummary[]>(() => computeKpiSummaries(loadFromStorage(STORAGE_KEYS.vehicles, demoVehicles), demoSLAs));
   const [lastRefresh, setLastRefresh] = useState(new Date().toISOString());
+
+  // Persist to localStorage on changes
+  useEffect(() => { saveToStorage(STORAGE_KEYS.vehicles, vehicles); }, [vehicles]);
+  useEffect(() => { saveToStorage(STORAGE_KEYS.importBatches, importBatches); }, [importBatches]);
+  useEffect(() => { saveToStorage(STORAGE_KEYS.qualityIssues, qualityIssues); }, [qualityIssues]);
 
   const setVehicles = useCallback((v: VehicleCanonical[]) => {
     setVehiclesState(v);
