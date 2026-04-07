@@ -2,12 +2,15 @@ import { Worker } from "bullmq";
 import {
   ALERT_EVALUATION_JOB_NAME,
   ALERT_QUEUE_NAME,
+  EXPORT_DAILY_SUBSCRIPTIONS_JOB_NAME,
+  EXPORT_GENERATE_JOB_NAME,
   EXPORT_QUEUE_NAME,
   IMPORT_PUBLISH_JOB_NAME,
   IMPORT_PREVIEW_JOB_NAME,
   IMPORT_QUEUE_NAME,
 } from "@flcbi/contracts";
 import { processAlertEvaluationJob } from "./alert-evaluation.processor.js";
+import { processExportJob } from "./export.processor.js";
 import { processImportPublishJob } from "./import-publish.processor.js";
 import { processImportPreviewJob } from "./import-preview.processor.js";
 
@@ -50,7 +53,10 @@ const workers = [
     EXPORT_QUEUE_NAME,
     async (job) => {
       console.log(`Processing export job ${job.id}`, job.data);
-      return { ok: true };
+      if (job.name === EXPORT_GENERATE_JOB_NAME || job.name === EXPORT_DAILY_SUBSCRIPTIONS_JOB_NAME) {
+        return processExportJob(job);
+      }
+      return { ok: true, skipped: true, reason: `unsupported job ${job.name}` };
     },
     { connection },
   ),

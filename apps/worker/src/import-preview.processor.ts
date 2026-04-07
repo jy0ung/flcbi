@@ -21,6 +21,11 @@ interface ImportJobRow {
   storage_path: string | null;
   status: string;
   preview_available: boolean | null;
+  processing_started_at: string | null;
+  last_error_at: string | null;
+  error_message: string | null;
+  attempt_count: number | null;
+  max_attempts: number | null;
 }
 
 export async function processImportPreviewJob(job: Job<ImportPreviewJobPayload>) {
@@ -30,6 +35,8 @@ export async function processImportPreviewJob(job: Job<ImportPreviewJobPayload>)
 
   const client = getSupabaseAdminClient();
   const importJob = await fetchImportJob(client, job.data.importId);
+  const attemptCount = job.attemptsMade + 1;
+  const maxAttempts = typeof job.opts.attempts === "number" ? job.opts.attempts : 1;
   if (!importJob) {
     throw new Error(`Import ${job.data.importId} was not found`);
   }
@@ -43,7 +50,14 @@ export async function processImportPreviewJob(job: Job<ImportPreviewJobPayload>)
     return { ok: true, skipped: true, importId: importJob.id, status: importJob.status };
   }
 
-  await updateImportStatus(client, importJob.company_id, importJob.id, "validating");
+  await updateImportStatus(client, importJob.company_id, importJob.id, {
+    status: "validating",
+    processing_started_at: new Date().toISOString(),
+    last_error_at: null,
+    error_message: null,
+    attempt_count: attemptCount,
+    max_attempts: maxAttempts,
+  });
 
   try {
     const workbook = await downloadImportWorkbook(client, importJob.storage_path);
@@ -66,6 +80,10 @@ export async function processImportPreviewJob(job: Job<ImportPreviewJobPayload>)
         duplicate_rows: summary.duplicateRows,
         missing_columns: parsed.missingColumns,
         preview_available: true,
+        last_error_at: null,
+        error_message: null,
+        attempt_count: attemptCount,
+        max_attempts: maxAttempts,
       })
       .eq("company_id", importJob.company_id)
       .eq("id", importJob.id)
@@ -78,6 +96,20 @@ export async function processImportPreviewJob(job: Job<ImportPreviewJobPayload>)
       totalRows: summary.totalRows,
     };
   } catch (error) {
+    await runBestEffort(`import_preview_attempt_failure:${importJob.id}`, async () => {
+      await client
+        .schema("app")
+        .from("import_jobs")
+        .update({
+          last_error_at: new Date().toISOString(),
+          error_message: error instanceof Error ? error.message : String(error),
+          attempt_count: attemptCount,
+          max_attempts: maxAttempts,
+        })
+        .eq("company_id", importJob.company_id)
+        .eq("id", importJob.id)
+        .throwOnError();
+    });
     await runBestEffort(`import_preview_cleanup:${importJob.id}`, async () => {
       await clearImportPreviewArtifacts(client, importJob.company_id, importJob.id);
     });
@@ -93,6 +125,10 @@ export async function processImportPreviewJob(job: Job<ImportPreviewJobPayload>)
           duplicate_rows: 0,
           missing_columns: [],
           preview_available: false,
+          last_error_at: new Date().toISOString(),
+          error_message: error instanceof Error ? error.message : String(error),
+          attempt_count: attemptCount,
+          max_attempts: maxAttempts,
         })
         .eq("company_id", importJob.company_id)
         .eq("id", importJob.id)
@@ -106,7 +142,7 @@ async function fetchImportJob(client: SupabaseClient, importId: string) {
   const { data } = await client
     .schema("app")
     .from("import_jobs")
-    .select("id, company_id, storage_path, status, preview_available")
+    .select("id, company_id, storage_path, status, preview_available, processing_started_at, last_error_at, error_message, attempt_count, max_attempts")
     .eq("id", importId)
     .maybeSingle()
     .throwOnError();
@@ -118,12 +154,12 @@ async function updateImportStatus(
   client: SupabaseClient,
   companyId: string,
   importId: string,
-  status: string,
+  input: Record<string, string | number | null>,
 ) {
   await client
     .schema("app")
     .from("import_jobs")
-    .update({ status })
+    .update(input)
     .eq("company_id", companyId)
     .eq("id", importId)
     .throwOnError();

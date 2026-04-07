@@ -76,6 +76,56 @@ export interface ImportBatch {
   storageKey?: string;
   datasetVersionId?: string;
   publishMode?: ImportPublishMode;
+  processingStartedAt?: string;
+  lastErrorAt?: string;
+  errorMessage?: string;
+  attemptCount?: number;
+  maxAttempts?: number;
+  canRetryPublish?: boolean;
+}
+
+export type ExportStatus =
+  | "queued"
+  | "generation_in_progress"
+  | "completed"
+  | "failed";
+
+export type ExportFormat = "csv";
+
+export type ExportKind = "vehicle_explorer_csv";
+
+export type ExportSubscriptionSchedule = "daily";
+
+export interface ExportJob {
+  id: string;
+  fileName: string;
+  requestedBy: string;
+  requestedAt: string;
+  status: ExportStatus;
+  format: ExportFormat;
+  kind: ExportKind;
+  totalRows: number;
+  query: ExplorerQuery;
+  storageKey?: string;
+  completedAt?: string;
+  processingStartedAt?: string;
+  lastErrorAt?: string;
+  errorMessage?: string;
+  attemptCount?: number;
+  maxAttempts?: number;
+  canRetry?: boolean;
+}
+
+export interface ExportSubscription {
+  id: string;
+  requestedBy: string;
+  createdAt: string;
+  schedule: ExportSubscriptionSchedule;
+  kind: ExportKind;
+  enabled: boolean;
+  query: ExplorerQuery;
+  lastTriggeredAt?: string;
+  lastExportJobId?: string;
 }
 
 export interface DatasetVersion {

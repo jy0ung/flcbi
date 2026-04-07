@@ -222,6 +222,13 @@ export const navigationItems: NavigationItem[] = [
   { label: "Aging Dashboard", path: "/auto-aging", icon: "Timer", section: "Auto Aging" },
   { label: "Vehicle Explorer", path: "/auto-aging/vehicles", icon: "Car", section: "Auto Aging" },
   {
+    label: "Exports",
+    path: "/auto-aging/exports",
+    icon: "Download",
+    section: "Auto Aging",
+    roles: ["super_admin", "company_admin", "director", "general_manager", "manager", "analyst"],
+  },
+  {
     label: "Import Center",
     path: "/auto-aging/import",
     icon: "Upload",
@@ -234,6 +241,7 @@ export const navigationItems: NavigationItem[] = [
   { label: "Import History", path: "/auto-aging/history", icon: "History", section: "Auto Aging" },
   { label: "Users & Roles", path: "/admin/users", icon: "Shield", section: "Admin", roles: ["super_admin", "company_admin"] },
   { label: "Audit Log", path: "/admin/audit", icon: "FileText", section: "Admin", roles: ["super_admin", "company_admin", "director"] },
+  { label: "Operations", path: "/admin/operations", icon: "Activity", section: "Admin", roles: ["super_admin", "company_admin", "director"] },
   { label: "Settings", path: "/admin/settings", icon: "Settings", section: "Admin" },
 ];
 
@@ -504,37 +512,7 @@ export function queryVehicles(
   vehicles: VehicleCanonical[],
   query: ExplorerQuery,
 ): ExplorerResult {
-  const referenceDate = new Date().toISOString().slice(0, 10);
-  const filtered = vehicles
-    .filter((vehicle) => {
-      if (query.search) {
-        const term = query.search.toLowerCase();
-        const matchesSearch =
-          vehicle.chassis_no.toLowerCase().includes(term) ||
-          vehicle.customer_name.toLowerCase().includes(term) ||
-          vehicle.salesman_name.toLowerCase().includes(term);
-        if (!matchesSearch) return false;
-      }
-      if (query.branch && query.branch !== "all" && vehicle.branch_code !== query.branch) return false;
-      if (query.model && query.model !== "all" && vehicle.model !== query.model) return false;
-      if (query.payment && query.payment !== "all" && vehicle.payment_method !== query.payment) return false;
-      if (!matchesExplorerPreset(vehicle, query.preset, referenceDate)) return false;
-      return true;
-    })
-    .sort((left, right) => {
-      const field = query.sortField ?? "bg_to_delivery";
-      const direction = query.sortDirection ?? "desc";
-      const leftValue = (left[field] as number | string | null | undefined) ?? 0;
-      const rightValue = (right[field] as number | string | null | undefined) ?? 0;
-      if (typeof leftValue === "string" && typeof rightValue === "string") {
-        return direction === "desc"
-          ? rightValue.localeCompare(leftValue)
-          : leftValue.localeCompare(rightValue);
-      }
-      return direction === "desc"
-        ? Number(rightValue) - Number(leftValue)
-        : Number(leftValue) - Number(rightValue);
-    });
+  const filtered = sortVehiclesForExplorer(filterVehiclesForExplorer(vehicles, query), query);
 
   const page = Math.max(query.page, 1);
   const pageSize = Math.min(Math.max(query.pageSize, 1), 100);
@@ -548,4 +526,97 @@ export function queryVehicles(
     pageSize,
     filterOptions: buildFilterOptions(vehicles),
   };
+}
+
+export function filterVehiclesForExplorer(
+  vehicles: VehicleCanonical[],
+  query: Pick<ExplorerQuery, "search" | "branch" | "model" | "payment" | "preset">,
+  referenceDate = new Date().toISOString().slice(0, 10),
+) {
+  return vehicles.filter((vehicle) => {
+    if (query.search) {
+      const term = query.search.toLowerCase();
+      const matchesSearch =
+        vehicle.chassis_no.toLowerCase().includes(term) ||
+        vehicle.customer_name.toLowerCase().includes(term) ||
+        vehicle.salesman_name.toLowerCase().includes(term);
+      if (!matchesSearch) return false;
+    }
+    if (query.branch && query.branch !== "all" && vehicle.branch_code !== query.branch) return false;
+    if (query.model && query.model !== "all" && vehicle.model !== query.model) return false;
+    if (query.payment && query.payment !== "all" && vehicle.payment_method !== query.payment) return false;
+    if (!matchesExplorerPreset(vehicle, query.preset, referenceDate)) return false;
+    return true;
+  });
+}
+
+export function sortVehiclesForExplorer(
+  vehicles: VehicleCanonical[],
+  query: Pick<ExplorerQuery, "sortField" | "sortDirection">,
+) {
+  return [...vehicles].sort((left, right) => {
+    const field = query.sortField ?? "bg_to_delivery";
+    const direction = query.sortDirection ?? "desc";
+    const leftValue = (left[field] as number | string | null | undefined) ?? 0;
+    const rightValue = (right[field] as number | string | null | undefined) ?? 0;
+    if (typeof leftValue === "string" && typeof rightValue === "string") {
+      return direction === "desc"
+        ? rightValue.localeCompare(leftValue)
+        : leftValue.localeCompare(rightValue);
+    }
+    return direction === "desc"
+      ? Number(rightValue) - Number(leftValue)
+      : Number(leftValue) - Number(rightValue);
+  });
+}
+
+export function buildVehicleExplorerExportRows(vehicles: VehicleCanonical[]) {
+  return vehicles.map((vehicle) => ({
+    "Chassis No": vehicle.chassis_no,
+    Branch: vehicle.branch_code,
+    Model: vehicle.model,
+    "Payment Method": vehicle.payment_method,
+    Salesman: vehicle.salesman_name,
+    Customer: vehicle.customer_name,
+    D2D: vehicle.is_d2d ? "Yes" : "No",
+    "BG Date": vehicle.bg_date ?? "",
+    "Shipment ETD": vehicle.shipment_etd_pkg ?? "",
+    "Shipment ETA": vehicle.shipment_eta_kk_twu_sdk ?? "",
+    "Outlet Received Date": vehicle.date_received_by_outlet ?? "",
+    "Registration Date": vehicle.reg_date ?? "",
+    "Delivery Date": vehicle.delivery_date ?? "",
+    "Disbursement Date": vehicle.disb_date ?? "",
+    "BG to Delivery": vehicle.bg_to_delivery ?? "",
+    "BG to Shipment ETD": vehicle.bg_to_shipment_etd ?? "",
+    "ETD to Outlet Received": vehicle.etd_to_outlet_received ?? "",
+    "Outlet Received to Registration": vehicle.outlet_received_to_reg ?? "",
+    "Registration to Delivery": vehicle.reg_to_delivery ?? "",
+    "ETD to ETA": vehicle.etd_to_eta ?? "",
+    "ETA to Outlet Received": vehicle.eta_to_outlet_received ?? "",
+    "Outlet Received to Delivery": vehicle.outlet_received_to_delivery ?? "",
+    "BG to Disbursement": vehicle.bg_to_disb ?? "",
+    "Delivery to Disbursement": vehicle.delivery_to_disb ?? "",
+  }));
+}
+
+export function serializeCsvRows(rows: Array<Record<string, string | number | boolean | null | undefined>>) {
+  if (rows.length === 0) {
+    return "";
+  }
+
+  const columns = Object.keys(rows[0]);
+  const escapeCell = (value: string | number | boolean | null | undefined) => {
+    const text = value == null ? "" : String(value);
+    if (!/[",\n\r]/.test(text)) {
+      return text;
+    }
+    return `"${text.replaceAll('"', '""')}"`;
+  };
+
+  const lines = [
+    columns.map((column) => escapeCell(column)).join(","),
+    ...rows.map((row) => columns.map((column) => escapeCell(row[column])).join(",")),
+  ];
+
+  return `${lines.join("\n")}\n`;
 }

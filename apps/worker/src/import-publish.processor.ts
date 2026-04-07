@@ -19,6 +19,11 @@ interface ImportJobRow {
   company_id: string;
   file_name: string;
   status: string;
+  processing_started_at: string | null;
+  last_error_at: string | null;
+  error_message: string | null;
+  attempt_count: number | null;
+  max_attempts: number | null;
 }
 
 interface RawImportRow {
@@ -60,6 +65,8 @@ export async function processImportPublishJob(job: Job<ImportPublishJobPayload>)
 
   const client = getSupabaseAdminClient();
   const importJob = await fetchImportJob(client, job.data.importId);
+  const attemptCount = job.attemptsMade + 1;
+  const maxAttempts = typeof job.opts.attempts === "number" ? job.opts.attempts : 1;
   if (!importJob) {
     throw new Error(`Import ${job.data.importId} was not found`);
   }
@@ -68,6 +75,14 @@ export async function processImportPublishJob(job: Job<ImportPublishJobPayload>)
     if (importJob.status === "published") {
       return { ok: true, skipped: true, importId: importJob.id, status: importJob.status };
     }
+
+    await updateImportJob(client, importJob.company_id, importJob.id, {
+      processing_started_at: new Date().toISOString(),
+      last_error_at: null,
+      error_message: null,
+      attempt_count: attemptCount,
+      max_attempts: maxAttempts,
+    });
 
     const previewRows = await fetchPersistedRawRows(client, importJob.company_id, importJob.id);
     const previewIssues = await fetchPersistedIssues(client, importJob.company_id, importJob.id);
@@ -102,6 +117,13 @@ export async function processImportPublishJob(job: Job<ImportPublishJobPayload>)
     if (error || !datasetVersionId) {
       throw new Error(error?.message ?? "Failed to publish import");
     }
+
+    await updateImportJob(client, importJob.company_id, importJob.id, {
+      last_error_at: null,
+      error_message: null,
+      attempt_count: attemptCount,
+      max_attempts: maxAttempts,
+    });
 
     await runBestEffort(`import_publish_audit:${importJob.id}`, async () => {
       await addAuditEvent(client, {
@@ -159,10 +181,24 @@ export async function processImportPublishJob(job: Job<ImportPublishJobPayload>)
       canonicalCount: canonical.length,
     };
   } catch (error) {
-    const maxAttempts = typeof job.opts.attempts === "number" ? job.opts.attempts : 1;
+    await runBestEffort(`import_publish_attempt_failure:${importJob.id}`, async () => {
+      await updateImportJob(client, importJob.company_id, importJob.id, {
+        last_error_at: new Date().toISOString(),
+        error_message: error instanceof Error ? error.message : String(error),
+        attempt_count: attemptCount,
+        max_attempts: maxAttempts,
+      });
+    });
     if (job.attemptsMade + 1 >= maxAttempts) {
       await runBestEffort(`import_publish_mark_failed:${importJob.id}`, async () => {
-        await markImportPublishFailed(client, importJob.company_id, importJob.id);
+        await markImportPublishFailed(
+          client,
+          importJob.company_id,
+          importJob.id,
+          error instanceof Error ? error.message : String(error),
+          attemptCount,
+          maxAttempts,
+        );
       });
       await runBestEffort(`import_publish_failure_audit:${importJob.id}`, async () => {
         await addAuditEvent(client, {
@@ -199,7 +235,7 @@ async function fetchImportJob(client: SupabaseClient, importId: string) {
   const { data } = await client
     .schema("app")
     .from("import_jobs")
-    .select("id, company_id, file_name, status")
+    .select("id, company_id, file_name, status, processing_started_at, last_error_at, error_message, attempt_count, max_attempts")
     .eq("id", importId)
     .maybeSingle()
     .throwOnError();
@@ -336,7 +372,14 @@ function buildPublishQualityIssueRows(
   }));
 }
 
-async function markImportPublishFailed(client: SupabaseClient, companyId: string, importId: string) {
+async function markImportPublishFailed(
+  client: SupabaseClient,
+  companyId: string,
+  importId: string,
+  errorMessage: string,
+  attemptCount: number,
+  maxAttempts: number,
+) {
   await client
     .schema("app")
     .from("import_jobs")
@@ -345,7 +388,26 @@ async function markImportPublishFailed(client: SupabaseClient, companyId: string
       preview_available: true,
       published_at: null,
       dataset_version_id: null,
+      last_error_at: new Date().toISOString(),
+      error_message: errorMessage,
+      attempt_count: attemptCount,
+      max_attempts: maxAttempts,
     })
+    .eq("company_id", companyId)
+    .eq("id", importId)
+    .throwOnError();
+}
+
+async function updateImportJob(
+  client: SupabaseClient,
+  companyId: string,
+  importId: string,
+  input: Record<string, string | number | null>,
+) {
+  await client
+    .schema("app")
+    .from("import_jobs")
+    .update(input)
     .eq("company_id", companyId)
     .eq("id", importId)
     .throwOnError();

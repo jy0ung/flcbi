@@ -10,6 +10,7 @@ import { AdminController } from "./admin/admin.controller.js";
 import { NavigationController } from "./navigation/navigation.controller.js";
 import { NotificationsController } from "./notifications/notifications.controller.js";
 import { PreferencesController } from "./preferences/preferences.controller.js";
+import { ExportsController } from "./exports/exports.controller.js";
 import { PlatformStoreService } from "./storage/platform-store.service.js";
 import { PlatformAuthSessionService } from "./auth/platform-auth-session.service.js";
 import { ApiAuthGuard } from "./common/api-auth.guard.js";
@@ -22,6 +23,7 @@ import { SupabaseAdminService } from "./supabase/supabase-admin.service.js";
 import { SupabasePlatformRepository } from "./supabase/supabase-platform.repository.js";
 import { ImportQueueService } from "./queues/import-queue.service.js";
 import { AlertQueueService } from "./queues/alert-queue.service.js";
+import { ExportQueueService } from "./queues/export-queue.service.js";
 
 @Module({
   controllers: [
@@ -35,6 +37,7 @@ import { AlertQueueService } from "./queues/alert-queue.service.js";
     NavigationController,
     NotificationsController,
     PreferencesController,
+    ExportsController,
   ],
   providers: [
     PlatformStoreService,
@@ -44,6 +47,7 @@ import { AlertQueueService } from "./queues/alert-queue.service.js";
     SupabaseAdminService,
     ImportQueueService,
     AlertQueueService,
+    ExportQueueService,
     { provide: PLATFORM_REPOSITORY, useExisting: SupabasePlatformRepository },
     { provide: AUTH_SESSION_SERVICE, useExisting: PlatformAuthSessionService },
     { provide: APP_GUARD, useClass: ApiAuthGuard },

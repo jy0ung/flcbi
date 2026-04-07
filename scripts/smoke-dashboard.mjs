@@ -231,6 +231,22 @@ try {
   const hasEmptyState = await emptyState.count();
   assert(totalNotifications > 0 || hasEmptyState > 0, "Notifications page rendered neither items nor empty state");
 
+  console.log("step: exports");
+  await page.goto("/auto-aging/exports", { waitUntil: "domcontentloaded" });
+  await page.getByRole("heading", { name: "Exports" }).waitFor({ timeout: 15000 });
+  await page.getByTestId("exports-table").waitFor({ timeout: 15000 });
+  const exportRows = page.getByTestId("exports-row");
+  const exportEmptyState = page.getByTestId("exports-empty");
+  const renderedExports = await exportRows.count();
+  const hasExportEmptyState = await exportEmptyState.count();
+  assert(renderedExports > 0 || hasExportEmptyState > 0, "Exports page rendered neither rows nor empty state");
+
+  console.log("step: operations");
+  await page.goto("/admin/operations", { waitUntil: "domcontentloaded" });
+  await page.getByRole("heading", { name: "Operations" }).waitFor({ timeout: 15000 });
+  await page.getByTestId("operations-imports-table").waitFor({ timeout: 15000 });
+  await page.getByTestId("operations-exports-table").waitFor({ timeout: 15000 });
+
   console.log(JSON.stringify({
     status: "ok",
     chosenBranch,
@@ -240,6 +256,8 @@ try {
     explorerUrl: explorerUrl.toString(),
     importHistoryRows: await importHistoryRows.count(),
     notificationsRendered: totalNotifications,
+    exportsRendered: renderedExports,
+    operationsVisible: true,
   }, null, 2));
 } finally {
   if (initialMetricIds.length > 0) {

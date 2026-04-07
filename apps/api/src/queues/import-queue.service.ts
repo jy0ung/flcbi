@@ -38,8 +38,11 @@ export class ImportQueueService implements OnApplicationShutdown {
       return false;
     }
 
-    await this.getQueue().add(IMPORT_PREVIEW_JOB_NAME, payload, {
-      jobId: `import-preview-${payload.importId}`,
+    const queue = this.getQueue();
+    const jobId = `import-preview-${payload.importId}`;
+
+    await queue.add(IMPORT_PREVIEW_JOB_NAME, payload, {
+      jobId,
       attempts: 3,
       backoff: {
         type: "exponential",
@@ -61,8 +64,12 @@ export class ImportQueueService implements OnApplicationShutdown {
       return false;
     }
 
-    await this.getQueue().add(IMPORT_PUBLISH_JOB_NAME, payload, {
-      jobId: `import-publish-${payload.importId}`,
+    const queue = this.getQueue();
+    const jobId = `import-publish-${payload.importId}`;
+    await this.removeRetainedJob(queue, jobId);
+
+    await queue.add(IMPORT_PUBLISH_JOB_NAME, payload, {
+      jobId,
       attempts: 3,
       backoff: {
         type: "exponential",
@@ -101,5 +108,23 @@ export class ImportQueueService implements OnApplicationShutdown {
     }
 
     return this.queue;
+  }
+
+  private async removeRetainedJob(
+    queue: Queue<ImportPreviewJobPayload | ImportPublishJobPayload>,
+    jobId: string,
+  ) {
+    const existingJob = await queue.getJob(jobId);
+    if (!existingJob) {
+      return;
+    }
+
+    const state = await existingJob.getState();
+    if (state === "active") {
+      this.logger.warn(`Skipping cleanup for active import queue job ${jobId}`);
+      return;
+    }
+
+    await existingJob.remove();
   }
 }

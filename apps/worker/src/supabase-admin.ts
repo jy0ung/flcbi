@@ -26,6 +26,10 @@ export function getImportBucket() {
   return process.env.SUPABASE_STORAGE_IMPORT_BUCKET ?? "flcbi-imports";
 }
 
+export function getExportBucket() {
+  return process.env.SUPABASE_STORAGE_EXPORT_BUCKET ?? "flcbi-exports";
+}
+
 export async function runBestEffort(label: string, action: () => Promise<void>) {
   try {
     await action();

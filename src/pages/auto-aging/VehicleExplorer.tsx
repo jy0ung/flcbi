@@ -6,9 +6,10 @@ import { PageHeader } from '@/components/shared/PageHeader';
 import { QueryErrorState } from '@/components/shared/QueryErrorState';
 import { StatusBadge } from '@/components/shared/StatusBadge';
 import { Button } from '@/components/ui/button';
-import { Download, Search, X } from 'lucide-react';
-import { useExplorer } from '@/hooks/api/use-platform';
-import { downloadCsv } from '@/lib/export';
+import { toast } from '@/components/ui/sonner';
+import { useAuth } from '@/contexts/AuthContext';
+import { BellRing, Download, Search, X } from 'lucide-react';
+import { useCreateExplorerExport, useCreateExportSubscription, useExplorer } from '@/hooks/api/use-platform';
 
 const presetOptions: Array<{ value: ExplorerPreset; label: string }> = Object.entries(EXPLORER_PRESET_LABELS).map(
   ([value, label]) => ({ value: value as ExplorerPreset, label }),
@@ -49,6 +50,7 @@ function parsePage(value: string | null) {
 
 export default function VehicleExplorer() {
   const navigate = useNavigate();
+  const { hasRole } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
 
   const search = searchParams.get('search') ?? '';
@@ -84,11 +86,14 @@ export default function VehicleExplorer() {
   };
 
   const { data, error, isError, isLoading, refetch } = useExplorer(query);
+  const createExport = useCreateExplorerExport();
+  const createExportSubscription = useCreateExportSubscription();
   const result = data?.result;
   const branches = result?.filterOptions.branches ?? [];
   const models = result?.filterOptions.models ?? [];
   const payments = result?.filterOptions.payments ?? [];
   const presetLabel = preset ? EXPLORER_PRESET_LABELS[preset] : undefined;
+  const canExport = hasRole(['company_admin', 'super_admin', 'director', 'general_manager', 'manager', 'analyst']);
 
   const toggleSort = (field: keyof VehicleCanonical) => {
     if (sortField === field) {
@@ -113,6 +118,25 @@ export default function VehicleExplorer() {
       {label} {sortField === field && (sortDir === 'desc' ? '↓' : '↑')}
     </th>
   );
+
+  const handleExport = async () => {
+    try {
+      const response = await createExport.mutateAsync({ query });
+      toast.success(`Export queued: ${response.item.fileName}`);
+    } catch (exportError) {
+      toast.error(exportError instanceof Error ? exportError.message : 'Could not queue export');
+    }
+  };
+
+  const handleCreateSubscription = async () => {
+    try {
+      const response = await createExportSubscription.mutateAsync({ query, schedule: 'daily' });
+      toast.success(`Saved daily export for ${response.item.requestedBy}`);
+      navigate('/auto-aging/exports');
+    } catch (subscriptionError) {
+      toast.error(subscriptionError instanceof Error ? subscriptionError.message : 'Could not save daily export');
+    }
+  };
 
   if (isError) {
     return (
@@ -144,14 +168,31 @@ export default function VehicleExplorer() {
         }
         breadcrumbs={[{ label: 'FLC BI' }, { label: 'Auto Aging' }, { label: 'Vehicle Explorer' }]}
         actions={
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => result && downloadCsv("vehicle-explorer.csv", result.items.map((item) => ({ ...item })))}
-            disabled={!result || result.items.length === 0}
-          >
-            <Download className="h-3.5 w-3.5 mr-1" />Export CSV
-          </Button>
+          canExport ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <Button variant="outline" size="sm" onClick={() => navigate('/auto-aging/exports')}>
+                View Exports
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => void handleCreateSubscription()}
+                disabled={!result || result.total === 0 || createExportSubscription.isPending}
+              >
+                <BellRing className="h-3.5 w-3.5 mr-1" />
+                {createExportSubscription.isPending ? 'Saving…' : 'Save Daily Export'}
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => void handleExport()}
+                disabled={!result || result.total === 0 || createExport.isPending}
+              >
+                <Download className="h-3.5 w-3.5 mr-1" />
+                {createExport.isPending ? 'Queueing…' : 'Request CSV'}
+              </Button>
+            </div>
+          ) : undefined
         }
       />
 

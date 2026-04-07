@@ -1,6 +1,6 @@
 import { Injectable } from "@nestjs/common";
 import { constants } from "node:fs";
-import { access, mkdir, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 @Injectable()
@@ -15,6 +15,11 @@ export class ObjectStorageService {
       key,
       path: fullPath,
     };
+  }
+
+  async getObject(key: string) {
+    const fullPath = join(process.cwd(), this.baseDir, key);
+    return readFile(fullPath);
   }
 
   async checkHealth() {

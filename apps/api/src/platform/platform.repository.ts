@@ -9,6 +9,8 @@ import type {
   ExplorerQuery,
   ExplorerPreset,
   ExplorerResult,
+  ExportJob,
+  ExportSubscription,
   ImportBatch,
   ImportPublishMode,
   NavigationItem,
@@ -37,6 +39,12 @@ export interface ImportDetail {
 export interface VehicleDetail {
   vehicle: VehicleCanonical;
   issues: DataQualityIssue[];
+}
+
+export interface ExportDownload {
+  fileName: string;
+  contentType: string;
+  content: Buffer;
 }
 
 export interface PlatformRepository {
@@ -71,6 +79,13 @@ export interface PlatformRepository {
   getImportById(user: User, id: string): Awaitable<ImportDetail>;
   createImportPreview(user: User, fileName: string, fileBuffer: Buffer): Awaitable<ImportDetail>;
   publishImport(user: User, id: string, mode?: ImportPublishMode): Awaitable<ImportBatch>;
+  listExports(user: User): Awaitable<ExportJob[]>;
+  createExplorerExport(user: User, query: ExplorerQuery): Awaitable<ExportJob>;
+  listExportSubscriptions(user: User): Awaitable<ExportSubscription[]>;
+  createExportSubscription(user: User, query: ExplorerQuery): Awaitable<ExportSubscription>;
+  deleteExportSubscription(user: User, subscriptionId: string): Awaitable<void>;
+  retryExport(user: User, exportId: string): Awaitable<ExportJob>;
+  getExportDownload(user: User, exportId: string): Awaitable<ExportDownload>;
   getDashboardPreferences(user: User): Awaitable<DashboardPreferences>;
   saveDashboardPreferences(user: User, preferences: DashboardPreferences): Awaitable<DashboardPreferences>;
   listSlas(user: User): Awaitable<SlaPolicy[]>;

@@ -8,12 +8,16 @@ import {
   UnauthorizedException,
 } from "@nestjs/common";
 import {
+  buildVehicleExplorerExportRows,
   buildAlertNotificationFingerprint,
   buildAgingSummary,
   compareMetricValue,
   type Branch,
   createDefaultDashboardPreferences,
   describeAlertComparator,
+  type ExportJob,
+  type ExportSubscription,
+  filterVehiclesForExplorer,
   getExecutiveDashboardMetricOption,
   getExecutiveMetricValue,
   matchesExplorerPreset,
@@ -35,7 +39,9 @@ import {
   type ImportPublishMode,
   type NavigationItem,
   type Notification,
+  serializeCsvRows,
   type SlaPolicy,
+  sortVehiclesForExplorer,
   type User,
   type VehicleCanonical,
   type VehicleRaw,
@@ -43,12 +49,14 @@ import {
 import { randomUUID } from "node:crypto";
 import { PlatformStoreService } from "../storage/platform-store.service.js";
 import type {
+  ExportDownload,
   ImportDetail,
   PlatformRepository,
   PlatformRoleDefinition,
   VehicleDetail,
 } from "../platform/platform.repository.js";
 import { AlertQueueService } from "../queues/alert-queue.service.js";
+import { ExportQueueService } from "../queues/export-queue.service.js";
 import { ImportQueueService } from "../queues/import-queue.service.js";
 import { SupabaseAdminService } from "./supabase-admin.service.js";
 import {
@@ -89,6 +97,40 @@ interface NotificationRow {
   created_at: string;
 }
 
+interface ExportRow {
+  id: string;
+  company_id: string;
+  requested_by: string | null;
+  kind: ExportJob["kind"];
+  format: ExportJob["format"];
+  status: ExportJob["status"];
+  file_name: string;
+  query_definition: ExplorerQuery | null;
+  total_rows: number;
+  storage_path: string | null;
+  error_message: string | null;
+  completed_at: string | null;
+  processing_started_at: string | null;
+  last_error_at: string | null;
+  attempt_count: number | null;
+  max_attempts: number | null;
+  created_at: string;
+}
+
+interface ExportSubscriptionRow {
+  id: string;
+  company_id: string;
+  requested_by: string;
+  kind: ExportSubscription["kind"];
+  schedule: ExportSubscription["schedule"];
+  enabled: boolean;
+  fingerprint: string;
+  query_definition: ExplorerQuery | null;
+  last_triggered_at: string | null;
+  last_export_job_id: string | null;
+  created_at: string;
+}
+
 interface AuditRow {
   id: string;
   action: string;
@@ -116,6 +158,11 @@ interface ImportJobRow {
   dataset_version_id: string | null;
   publish_mode: ImportPublishMode | null;
   storage_path: string | null;
+  processing_started_at: string | null;
+  last_error_at: string | null;
+  error_message: string | null;
+  attempt_count: number | null;
+  max_attempts: number | null;
 }
 
 interface QualityIssueRow {
@@ -248,6 +295,7 @@ export class SupabasePlatformRepository implements PlatformRepository {
     @Inject(SupabaseAdminService) private readonly supabase: SupabaseAdminService,
     @Inject(PlatformStoreService) private readonly fallback: PlatformStoreService,
     @Inject(AlertQueueService) private readonly alertQueue: AlertQueueService,
+    @Inject(ExportQueueService) private readonly exportQueue: ExportQueueService,
     @Inject(ImportQueueService) private readonly importQueue: ImportQueueService,
   ) {}
 
@@ -723,7 +771,7 @@ export class SupabasePlatformRepository implements PlatformRepository {
     const { data, error } = await client
       .schema("app")
       .from("import_jobs")
-      .select("id, file_name, uploaded_by, created_at, status, total_rows, valid_rows, error_rows, duplicate_rows, missing_columns, published_at, preview_available, dataset_version_id, publish_mode, storage_path")
+      .select("id, file_name, uploaded_by, created_at, status, total_rows, valid_rows, error_rows, duplicate_rows, missing_columns, published_at, preview_available, dataset_version_id, publish_mode, storage_path, processing_started_at, last_error_at, error_message, attempt_count, max_attempts")
       .eq("id", id)
       .eq("company_id", companyId)
       .maybeSingle();
@@ -779,8 +827,10 @@ export class SupabasePlatformRepository implements PlatformRepository {
         status: "uploaded",
         missing_columns: [],
         preview_available: false,
+        attempt_count: 0,
+        max_attempts: this.importQueue.isConfigured() ? 3 : 1,
       })
-      .select("id, file_name, uploaded_by, created_at, status, total_rows, valid_rows, error_rows, duplicate_rows, missing_columns, published_at, preview_available, dataset_version_id, publish_mode, storage_path")
+      .select("id, file_name, uploaded_by, created_at, status, total_rows, valid_rows, error_rows, duplicate_rows, missing_columns, published_at, preview_available, dataset_version_id, publish_mode, storage_path, processing_started_at, last_error_at, error_message, attempt_count, max_attempts")
       .single();
 
     if (error || !data) {
@@ -835,7 +885,7 @@ export class SupabasePlatformRepository implements PlatformRepository {
     const { data: importJob, error: importJobError } = await client
       .schema("app")
       .from("import_jobs")
-      .select("id, file_name, uploaded_by, created_at, status, total_rows, valid_rows, error_rows, duplicate_rows, missing_columns, published_at, preview_available, dataset_version_id, publish_mode, storage_path")
+      .select("id, file_name, uploaded_by, created_at, status, total_rows, valid_rows, error_rows, duplicate_rows, missing_columns, published_at, preview_available, dataset_version_id, publish_mode, storage_path, processing_started_at, last_error_at, error_message, attempt_count, max_attempts")
       .eq("company_id", companyId)
       .eq("id", id)
       .maybeSingle();
@@ -874,6 +924,11 @@ export class SupabasePlatformRepository implements PlatformRepository {
         published_at: null,
         dataset_version_id: null,
         publish_mode: mode,
+        processing_started_at: null,
+        last_error_at: null,
+        error_message: null,
+        attempt_count: 0,
+        max_attempts: this.importQueue.isConfigured() ? 3 : 1,
       }]);
       return item;
     }
@@ -926,6 +981,8 @@ export class SupabasePlatformRepository implements PlatformRepository {
       dataset_version_id: String(datasetVersionId),
       publish_mode: mode,
       preview_available: false,
+      last_error_at: null,
+      error_message: null,
     };
 
     this.importPreviews.delete(id);
@@ -963,6 +1020,281 @@ export class SupabasePlatformRepository implements PlatformRepository {
 
     const [item] = await this.mapImportRows([importRow]);
     return item;
+  }
+
+  async listExports(user: User): Promise<ExportJob[]> {
+    if (!this.supabase.isConfigured()) {
+      return this.fallback.listExports(user);
+    }
+
+    const rows = await this.fetchExportRows(user);
+    return this.mapExportRows(rows);
+  }
+
+  async listExportSubscriptions(user: User): Promise<ExportSubscription[]> {
+    if (!this.supabase.isConfigured()) {
+      return this.fallback.listExportSubscriptions(user);
+    }
+
+    const rows = await this.fetchExportSubscriptionRows(user);
+    return this.mapExportSubscriptionRows(rows);
+  }
+
+  async createExplorerExport(user: User, query: ExplorerQuery): Promise<ExportJob> {
+    if (!this.supabase.isConfigured()) {
+      return this.fallback.createExplorerExport(user, query);
+    }
+
+    const client = this.supabase.getAdminClient();
+    const companyId = this.requireCompanyId(user);
+    const dbUserId = await this.resolveDbUserIdFromUser(user);
+    const exportId = randomUUID();
+    const requestedAt = new Date().toISOString();
+    const normalizedQuery = normalizeExportQuery(query);
+    const fileName = buildExportFileName(requestedAt);
+    const requestedBy = dbUserId ?? user.id;
+    const { data, error } = await client
+      .schema("app")
+      .from("export_jobs")
+      .insert({
+        id: exportId,
+        company_id: companyId,
+        requested_by: requestedBy,
+        kind: "vehicle_explorer_csv",
+        format: "csv",
+        status: "queued",
+        file_name: fileName,
+        query_definition: normalizedQuery,
+        attempt_count: 0,
+        max_attempts: this.exportQueue.isConfigured() ? 3 : 1,
+      })
+      .select("id, company_id, requested_by, kind, format, status, file_name, query_definition, total_rows, storage_path, error_message, completed_at, processing_started_at, last_error_at, attempt_count, max_attempts, created_at")
+      .single();
+
+    if (error || !data) {
+      throw new InternalServerErrorException(error?.message ?? "Failed to create export job");
+    }
+
+    await this.runBestEffort(`export_request_audit:${exportId}`, async () => {
+      await this.addAuditEvent({
+        action: "export_requested",
+        entity: "export_job",
+        entityId: exportId,
+        userId: user.id,
+        userName: user.name,
+        details: `Requested ${fileName}`,
+      });
+    });
+
+    if (this.exportQueue.isConfigured()) {
+      try {
+        await this.exportQueue.enqueueExplorerExport({ exportId });
+        const [item] = await this.mapExportRows([data as ExportRow]);
+        return item;
+      } catch (queueError) {
+        const message = queueError instanceof Error ? queueError.message : String(queueError);
+        this.logger.warn(`Export queue enqueue failed for ${exportId}, falling back to inline generation: ${message}`);
+      }
+    }
+
+    return this.generateExplorerExportInline(user, data as ExportRow);
+  }
+
+  async createExportSubscription(user: User, query: ExplorerQuery): Promise<ExportSubscription> {
+    if (!this.supabase.isConfigured()) {
+      return this.fallback.createExportSubscription(user, query);
+    }
+
+    const client = this.supabase.getAdminClient();
+    const companyId = this.requireCompanyId(user);
+    const requestedBy = (await this.resolveDbUserIdFromUser(user)) ?? user.id;
+    const normalizedQuery = normalizeExportQuery(query);
+    const fingerprint = buildExportSubscriptionFingerprint(normalizedQuery);
+
+    const { data, error } = await client
+      .schema("app")
+      .from("export_subscriptions")
+      .insert({
+        company_id: companyId,
+        requested_by: requestedBy,
+        kind: "vehicle_explorer_csv",
+        schedule: "daily",
+        enabled: true,
+        fingerprint,
+        query_definition: normalizedQuery,
+      })
+      .select("id, company_id, requested_by, kind, schedule, enabled, fingerprint, query_definition, last_triggered_at, last_export_job_id, created_at")
+      .single();
+
+    if (error || !data) {
+      if (error?.code === "23505") {
+        throw new BadRequestException("A matching daily export subscription already exists");
+      }
+      throw new InternalServerErrorException(error?.message ?? "Failed to create export subscription");
+    }
+
+    await this.runBestEffort(`export_subscription_create_audit:${(data as ExportSubscriptionRow).id}`, async () => {
+      await this.addAuditEvent({
+        action: "export_subscription_created",
+        entity: "export_subscription",
+        entityId: (data as ExportSubscriptionRow).id,
+        userId: user.id,
+        userName: user.name,
+        details: `Created daily export subscription for ${describeExportQuery(normalizedQuery)}`,
+      });
+    });
+
+    const [item] = await this.mapExportSubscriptionRows([data as ExportSubscriptionRow]);
+    return item;
+  }
+
+  async retryExport(user: User, exportId: string): Promise<ExportJob> {
+    if (!this.supabase.isConfigured()) {
+      return this.fallback.retryExport(user, exportId);
+    }
+
+    const companyId = this.requireCompanyId(user);
+    const exportRow = await this.fetchExportRowForUser(user, exportId);
+    if (!exportRow) {
+      throw new NotFoundException(`Export ${exportId} not found`);
+    }
+    if (exportRow.status !== "failed") {
+      throw new BadRequestException("Only failed exports can be retried");
+    }
+
+    const client = this.supabase.getAdminClient();
+    const updatedAt = new Date().toISOString();
+    const { data, error } = await client
+      .schema("app")
+      .from("export_jobs")
+      .update({
+        status: "queued",
+        total_rows: 0,
+        storage_path: null,
+        completed_at: null,
+        processing_started_at: null,
+        last_error_at: null,
+        error_message: null,
+        attempt_count: 0,
+        max_attempts: this.exportQueue.isConfigured() ? 3 : 1,
+      })
+      .eq("company_id", companyId)
+      .eq("id", exportId)
+      .select("id, company_id, requested_by, kind, format, status, file_name, query_definition, total_rows, storage_path, error_message, completed_at, processing_started_at, last_error_at, attempt_count, max_attempts, created_at")
+      .single();
+
+    if (error || !data) {
+      throw new InternalServerErrorException(error?.message ?? "Failed to retry export");
+    }
+
+    await this.runBestEffort(`export_retry_audit:${exportId}`, async () => {
+      await this.addAuditEvent({
+        action: "export_retry_requested",
+        entity: "export_job",
+        entityId: exportId,
+        userId: user.id,
+        userName: user.name,
+        details: `Queued retry for ${(data as ExportRow).file_name} at ${updatedAt}`,
+      });
+    });
+
+    if (this.exportQueue.isConfigured()) {
+      try {
+        await this.exportQueue.enqueueExplorerExport({ exportId });
+        const [item] = await this.mapExportRows([data as ExportRow]);
+        return item;
+      } catch (queueError) {
+        const message = queueError instanceof Error ? queueError.message : String(queueError);
+        this.logger.warn(`Export retry enqueue failed for ${exportId}, falling back to inline generation: ${message}`);
+      }
+    }
+
+    const owner = await this.resolveUserFromDbId((data as ExportRow).requested_by);
+    if (!owner) {
+      throw new NotFoundException("The export owner could not be resolved");
+    }
+    return this.generateExplorerExportInline(owner, data as ExportRow);
+  }
+
+  async deleteExportSubscription(user: User, subscriptionId: string): Promise<void> {
+    if (!this.supabase.isConfigured()) {
+      return this.fallback.deleteExportSubscription(user, subscriptionId);
+    }
+
+    const companyId = this.requireCompanyId(user);
+    const subscription = await this.fetchExportSubscriptionRowForUser(user, subscriptionId);
+    if (!subscription) {
+      throw new NotFoundException(`Export subscription ${subscriptionId} not found`);
+    }
+
+    const client = this.supabase.getAdminClient();
+    const { error } = await client
+      .schema("app")
+      .from("export_subscriptions")
+      .delete()
+      .eq("company_id", companyId)
+      .eq("id", subscriptionId);
+
+    if (error) {
+      throw new InternalServerErrorException(error.message);
+    }
+
+    await this.runBestEffort(`export_subscription_delete_audit:${subscriptionId}`, async () => {
+      await this.addAuditEvent({
+        action: "export_subscription_deleted",
+        entity: "export_subscription",
+        entityId: subscriptionId,
+        userId: user.id,
+        userName: user.name,
+        details: `Deleted daily export subscription for ${describeExportQuery(normalizeExportQuery(subscription.query_definition ?? defaultExportQuery()))}`,
+      });
+    });
+  }
+
+  async getExportDownload(user: User, exportId: string): Promise<ExportDownload> {
+    if (!this.supabase.isConfigured()) {
+      return this.fallback.getExportDownload(user, exportId);
+    }
+
+    const companyId = this.requireCompanyId(user);
+    const client = this.supabase.getAdminClient();
+    let query = client
+      .schema("app")
+      .from("export_jobs")
+      .select("id, company_id, requested_by, kind, format, status, file_name, query_definition, total_rows, storage_path, error_message, completed_at, processing_started_at, last_error_at, attempt_count, max_attempts, created_at")
+      .eq("company_id", companyId)
+      .eq("id", exportId);
+
+    if (!canViewCompanyWideExports(user)) {
+      const dbUserId = await this.resolveDbUserIdFromUser(user);
+      query = query.eq("requested_by", dbUserId ?? user.id);
+    }
+
+    const { data, error } = await query.maybeSingle();
+
+    if (error) {
+      throw new InternalServerErrorException(error.message);
+    }
+    if (!data) {
+      throw new NotFoundException(`Export ${exportId} not found`);
+    }
+    if (data.status !== "completed" || !data.storage_path) {
+      throw new BadRequestException("This export is not ready to download yet");
+    }
+
+    const download = await client.storage
+      .from(this.supabase.getExportBucket())
+      .download(data.storage_path);
+
+    if (download.error || !download.data) {
+      throw new InternalServerErrorException(download.error?.message ?? "Failed to download export");
+    }
+
+    return {
+      fileName: data.file_name,
+      contentType: "text/csv; charset=utf-8",
+      content: Buffer.from(await download.data.arrayBuffer()),
+    };
   }
 
   async getDashboardPreferences(user: User): Promise<DashboardPreferences> {
@@ -1264,6 +1596,15 @@ export class SupabasePlatformRepository implements PlatformRepository {
     return profile?.id ?? null;
   }
 
+  private async resolveUserFromDbId(id: string | null) {
+    if (!id) {
+      return null;
+    }
+
+    const profile = await this.fetchProfileByDbId(id);
+    return profile ? toContractUser(profile) : null;
+  }
+
   private async findAuthUserByEmail(email: string) {
     const client = this.supabase.getAdminClient();
     let page = 1;
@@ -1402,7 +1743,7 @@ export class SupabasePlatformRepository implements PlatformRepository {
     const { data, error } = await client
       .schema("app")
       .from("import_jobs")
-      .select("id, file_name, uploaded_by, created_at, status, total_rows, valid_rows, error_rows, duplicate_rows, missing_columns, published_at, preview_available, dataset_version_id, publish_mode, storage_path")
+      .select("id, file_name, uploaded_by, created_at, status, total_rows, valid_rows, error_rows, duplicate_rows, missing_columns, published_at, preview_available, dataset_version_id, publish_mode, storage_path, processing_started_at, last_error_at, error_message, attempt_count, max_attempts")
       .eq("company_id", companyId)
       .order("created_at", { ascending: false });
 
@@ -1410,6 +1751,96 @@ export class SupabasePlatformRepository implements PlatformRepository {
       throw new InternalServerErrorException(error.message);
     }
     return (data ?? []) as ImportJobRow[];
+  }
+
+  private async fetchExportRows(user: User) {
+    const companyId = this.requireCompanyId(user);
+    const client = this.supabase.getAdminClient();
+    let query = client
+      .schema("app")
+      .from("export_jobs")
+      .select("id, company_id, requested_by, kind, format, status, file_name, query_definition, total_rows, storage_path, error_message, completed_at, processing_started_at, last_error_at, attempt_count, max_attempts, created_at")
+      .eq("company_id", companyId)
+      .order("created_at", { ascending: false });
+
+    if (!canViewCompanyWideExports(user)) {
+      const requestedBy = (await this.resolveDbUserIdFromUser(user)) ?? user.id;
+      query = query.eq("requested_by", requestedBy);
+    }
+
+    const { data, error } = await query;
+
+    if (error) {
+      throw new InternalServerErrorException(error.message);
+    }
+    return (data ?? []) as ExportRow[];
+  }
+
+  private async fetchExportSubscriptionRows(user: User) {
+    const companyId = this.requireCompanyId(user);
+    const client = this.supabase.getAdminClient();
+    let query = client
+      .schema("app")
+      .from("export_subscriptions")
+      .select("id, company_id, requested_by, kind, schedule, enabled, fingerprint, query_definition, last_triggered_at, last_export_job_id, created_at")
+      .eq("company_id", companyId)
+      .order("created_at", { ascending: false });
+
+    if (!canViewCompanyWideExports(user)) {
+      const requestedBy = (await this.resolveDbUserIdFromUser(user)) ?? user.id;
+      query = query.eq("requested_by", requestedBy);
+    }
+
+    const { data, error } = await query;
+
+    if (error) {
+      throw new InternalServerErrorException(error.message);
+    }
+    return (data ?? []) as ExportSubscriptionRow[];
+  }
+
+  private async fetchExportRowForUser(user: User, exportId: string) {
+    const companyId = this.requireCompanyId(user);
+    const client = this.supabase.getAdminClient();
+    let query = client
+      .schema("app")
+      .from("export_jobs")
+      .select("id, company_id, requested_by, kind, format, status, file_name, query_definition, total_rows, storage_path, error_message, completed_at, processing_started_at, last_error_at, attempt_count, max_attempts, created_at")
+      .eq("company_id", companyId)
+      .eq("id", exportId);
+
+    if (!canViewCompanyWideExports(user)) {
+      const requestedBy = (await this.resolveDbUserIdFromUser(user)) ?? user.id;
+      query = query.eq("requested_by", requestedBy);
+    }
+
+    const { data, error } = await query.maybeSingle();
+    if (error) {
+      throw new InternalServerErrorException(error.message);
+    }
+    return (data as ExportRow | null) ?? null;
+  }
+
+  private async fetchExportSubscriptionRowForUser(user: User, subscriptionId: string) {
+    const companyId = this.requireCompanyId(user);
+    const client = this.supabase.getAdminClient();
+    let query = client
+      .schema("app")
+      .from("export_subscriptions")
+      .select("id, company_id, requested_by, kind, schedule, enabled, fingerprint, query_definition, last_triggered_at, last_export_job_id, created_at")
+      .eq("company_id", companyId)
+      .eq("id", subscriptionId);
+
+    if (!canViewCompanyWideExports(user)) {
+      const requestedBy = (await this.resolveDbUserIdFromUser(user)) ?? user.id;
+      query = query.eq("requested_by", requestedBy);
+    }
+
+    const { data, error } = await query.maybeSingle();
+    if (error) {
+      throw new InternalServerErrorException(error.message);
+    }
+    return (data as ExportSubscriptionRow | null) ?? null;
   }
 
   private async mapImportRows(rows: ImportJobRow[]): Promise<ImportBatch[]> {
@@ -1431,6 +1862,54 @@ export class SupabasePlatformRepository implements PlatformRepository {
       storageKey: row.storage_path ?? undefined,
       datasetVersionId: row.dataset_version_id ?? undefined,
       publishMode: row.publish_mode ?? undefined,
+      processingStartedAt: row.processing_started_at ?? undefined,
+      lastErrorAt: row.last_error_at ?? undefined,
+      errorMessage: row.error_message ?? undefined,
+      attemptCount: row.attempt_count ?? 0,
+      maxAttempts: row.max_attempts ?? 3,
+      canRetryPublish: this.isRetryablePublishFailure(row),
+    }));
+  }
+
+  private async mapExportRows(rows: ExportRow[]): Promise<ExportJob[]> {
+    const userIds = [...new Set(rows.map((row) => row.requested_by).filter((value): value is string => Boolean(value)))];
+    const nameMap = await this.fetchProfileNameMap(userIds);
+
+    return rows.map((row) => ({
+      id: row.id,
+      fileName: row.file_name,
+      requestedBy: row.requested_by ? (nameMap.get(row.requested_by) ?? row.requested_by) : "Unknown User",
+      requestedAt: row.created_at,
+      status: row.status,
+      format: row.format,
+      kind: row.kind,
+      totalRows: row.total_rows,
+      query: normalizeExportQuery(row.query_definition ?? defaultExportQuery()),
+      storageKey: row.storage_path ?? undefined,
+      completedAt: row.completed_at ?? undefined,
+      processingStartedAt: row.processing_started_at ?? undefined,
+      lastErrorAt: row.last_error_at ?? undefined,
+      errorMessage: row.error_message ?? undefined,
+      attemptCount: row.attempt_count ?? 0,
+      maxAttempts: row.max_attempts ?? 3,
+      canRetry: row.status === "failed",
+    }));
+  }
+
+  private async mapExportSubscriptionRows(rows: ExportSubscriptionRow[]): Promise<ExportSubscription[]> {
+    const userIds = [...new Set(rows.map((row) => row.requested_by).filter((value): value is string => Boolean(value)))];
+    const nameMap = await this.fetchProfileNameMap(userIds);
+
+    return rows.map((row) => ({
+      id: row.id,
+      requestedBy: nameMap.get(row.requested_by) ?? row.requested_by,
+      createdAt: row.created_at,
+      schedule: row.schedule,
+      kind: row.kind,
+      enabled: row.enabled,
+      query: normalizeExportQuery(row.query_definition ?? defaultExportQuery()),
+      lastTriggeredAt: row.last_triggered_at ?? undefined,
+      lastExportJobId: row.last_export_job_id ?? undefined,
     }));
   }
 
@@ -1559,6 +2038,15 @@ export class SupabasePlatformRepository implements PlatformRepository {
 
   private async processUploadedImportPreview(companyId: string, importId: string, fileBuffer: Buffer) {
     const branchIdByCode = await this.fetchBranchIdByCode(companyId);
+    const startedAt = new Date().toISOString();
+    await this.setImportAttemptMetadata(companyId, importId, {
+      status: "validating",
+      processing_started_at: startedAt,
+      last_error_at: null,
+      error_message: null,
+      attempt_count: 1,
+      max_attempts: 1,
+    });
     const parsed = parseWorkbook(
       fileBuffer.buffer.slice(
         fileBuffer.byteOffset,
@@ -1577,8 +2065,145 @@ export class SupabasePlatformRepository implements PlatformRepository {
         await this.clearImportPreviewArtifacts(companyId, importId);
       });
       await this.runBestEffort(`import_preview_mark_failed:${importId}`, async () => {
-        await this.markImportPreviewFailed(companyId, importId);
+        await this.markImportPreviewFailed(companyId, importId, error instanceof Error ? error.message : String(error), 1, 1);
       });
+      throw error;
+    }
+  }
+
+  private async generateExplorerExportInline(user: User, exportRow: ExportRow): Promise<ExportJob> {
+    const client = this.supabase.getAdminClient();
+    const companyId = this.requireCompanyId(user);
+    const normalizedQuery = normalizeExportQuery(exportRow.query_definition ?? defaultExportQuery());
+
+    try {
+      const startedAt = new Date().toISOString();
+      await client
+        .schema("app")
+        .from("export_jobs")
+        .update({
+          status: "generation_in_progress",
+          processing_started_at: startedAt,
+          error_message: null,
+          last_error_at: null,
+          attempt_count: 1,
+          max_attempts: 1,
+        })
+        .eq("company_id", companyId)
+        .eq("id", exportRow.id)
+        .throwOnError();
+
+      const vehicles = sortVehiclesForExplorer(
+        filterVehiclesForExplorer(await this.fetchVisibleVehicles(user), normalizedQuery),
+        normalizedQuery,
+      );
+      const csv = serializeCsvRows(buildVehicleExplorerExportRows(vehicles));
+      const storagePath = `${companyId}/exports/${exportRow.id}/${exportRow.file_name}`;
+      const upload = await client.storage
+        .from(this.supabase.getExportBucket())
+        .upload(storagePath, Buffer.from(csv, "utf8"), {
+          contentType: "text/csv",
+          upsert: true,
+        });
+
+      if (upload.error) {
+        throw new InternalServerErrorException(upload.error.message);
+      }
+
+      const completedAt = new Date().toISOString();
+      const { data, error } = await client
+        .schema("app")
+        .from("export_jobs")
+        .update({
+          status: "completed",
+          total_rows: vehicles.length,
+          storage_path: storagePath,
+          completed_at: completedAt,
+          error_message: null,
+          last_error_at: null,
+          attempt_count: 1,
+          max_attempts: 1,
+        })
+        .eq("company_id", companyId)
+        .eq("id", exportRow.id)
+        .select("id, company_id, requested_by, kind, format, status, file_name, query_definition, total_rows, storage_path, error_message, completed_at, processing_started_at, last_error_at, attempt_count, max_attempts, created_at")
+        .single();
+
+      if (error || !data) {
+        throw new InternalServerErrorException(error?.message ?? "Failed to update export job");
+      }
+
+      await this.runBestEffort(`export_complete_audit:${exportRow.id}`, async () => {
+        await this.addAuditEvent({
+          action: "export_completed",
+          entity: "export_job",
+          entityId: exportRow.id,
+          userId: user.id,
+          userName: user.name,
+          details: `Generated ${exportRow.file_name} with ${vehicles.length} vehicle rows`,
+        });
+      });
+
+      if (exportRow.requested_by) {
+        await this.runBestEffort(`export_complete_notification:${exportRow.id}`, async () => {
+          await this.createNotification({
+            companyId,
+            userId: exportRow.requested_by!,
+            title: `Export ready: ${exportRow.file_name}`,
+            message: `${vehicles.length} vehicles were prepared for download.`,
+            type: "success",
+            fingerprint: `export-complete:${exportRow.id}`,
+            metadata: {
+              exportId: exportRow.id,
+              totalRows: vehicles.length,
+            },
+          });
+        });
+      }
+
+      const [item] = await this.mapExportRows([data as ExportRow]);
+      return item;
+    } catch (error) {
+      await this.runBestEffort(`export_mark_failed:${exportRow.id}`, async () => {
+        await client
+          .schema("app")
+          .from("export_jobs")
+          .update({
+            status: "failed",
+            last_error_at: new Date().toISOString(),
+            error_message: error instanceof Error ? error.message : String(error),
+            attempt_count: 1,
+            max_attempts: 1,
+          })
+          .eq("company_id", companyId)
+          .eq("id", exportRow.id)
+          .throwOnError();
+      });
+      await this.runBestEffort(`export_failure_audit:${exportRow.id}`, async () => {
+        await this.addAuditEvent({
+          action: "export_failed",
+          entity: "export_job",
+          entityId: exportRow.id,
+          userId: user.id,
+          userName: user.name,
+          details: `Export generation failed for ${exportRow.file_name}: ${error instanceof Error ? error.message : String(error)}`,
+        });
+      });
+      if (exportRow.requested_by) {
+        await this.runBestEffort(`export_failure_notification:${exportRow.id}`, async () => {
+          await this.createNotification({
+            companyId,
+            userId: exportRow.requested_by!,
+            title: `Export failed: ${exportRow.file_name}`,
+            message: "The queued export did not finish. Please retry the export request.",
+            type: "error",
+            fingerprint: `export-failed:${exportRow.id}`,
+            metadata: {
+              exportId: exportRow.id,
+            },
+          });
+        });
+      }
       throw error;
     }
   }
@@ -1802,6 +2427,11 @@ export class SupabasePlatformRepository implements PlatformRepository {
         published_at: null,
         dataset_version_id: null,
         publish_mode: mode,
+        processing_started_at: null,
+        last_error_at: null,
+        error_message: null,
+        attempt_count: 0,
+        max_attempts: this.importQueue.isConfigured() ? 3 : 1,
       })
       .eq("company_id", companyId)
       .eq("id", importId);
@@ -1822,6 +2452,11 @@ export class SupabasePlatformRepository implements PlatformRepository {
         dataset_version_id: importJob.dataset_version_id,
         publish_mode: importJob.publish_mode,
         preview_available: importJob.preview_available ?? false,
+        processing_started_at: importJob.processing_started_at,
+        last_error_at: importJob.last_error_at,
+        error_message: importJob.error_message,
+        attempt_count: importJob.attempt_count ?? 0,
+        max_attempts: importJob.max_attempts ?? 3,
       })
       .eq("company_id", companyId)
       .eq("id", importJob.id);
@@ -2037,10 +2672,12 @@ export class SupabasePlatformRepository implements PlatformRepository {
         duplicate_rows: summary.duplicateRows,
         missing_columns: parsed.missingColumns,
         preview_available: true,
+        last_error_at: null,
+        error_message: null,
       })
       .eq("company_id", companyId)
       .eq("id", importId)
-      .select("id, file_name, uploaded_by, created_at, status, total_rows, valid_rows, error_rows, duplicate_rows, missing_columns, published_at, preview_available, dataset_version_id, publish_mode, storage_path")
+      .select("id, file_name, uploaded_by, created_at, status, total_rows, valid_rows, error_rows, duplicate_rows, missing_columns, published_at, preview_available, dataset_version_id, publish_mode, storage_path, processing_started_at, last_error_at, error_message, attempt_count, max_attempts")
       .single();
 
     if (error || !data) {
@@ -2050,7 +2687,13 @@ export class SupabasePlatformRepository implements PlatformRepository {
     return data as ImportJobRow;
   }
 
-  private async markImportPreviewFailed(companyId: string, importId: string) {
+  private async markImportPreviewFailed(
+    companyId: string,
+    importId: string,
+    errorMessage: string,
+    attemptCount: number,
+    maxAttempts: number,
+  ) {
     const client = this.supabase.getAdminClient();
     const { error } = await client
       .schema("app")
@@ -2063,7 +2706,29 @@ export class SupabasePlatformRepository implements PlatformRepository {
         duplicate_rows: 0,
         preview_available: false,
         missing_columns: [],
+        last_error_at: new Date().toISOString(),
+        error_message: errorMessage,
+        attempt_count: attemptCount,
+        max_attempts: maxAttempts,
       })
+      .eq("company_id", companyId)
+      .eq("id", importId);
+
+    if (error) {
+      throw new InternalServerErrorException(error.message);
+    }
+  }
+
+  private async setImportAttemptMetadata(
+    companyId: string,
+    importId: string,
+    input: Record<string, string | number | null>,
+  ) {
+    const client = this.supabase.getAdminClient();
+    const { error } = await client
+      .schema("app")
+      .from("import_jobs")
+      .update(input)
       .eq("company_id", companyId)
       .eq("id", importId);
 
@@ -2248,4 +2913,55 @@ function chunkArray<T>(items: T[], chunkSize: number) {
     chunks.push(items.slice(index, index + chunkSize));
   }
   return chunks;
+}
+
+function defaultExportQuery(): ExplorerQuery {
+  return {
+    branch: "all",
+    model: "all",
+    payment: "all",
+    page: 1,
+    pageSize: 100,
+    sortField: "bg_to_delivery",
+    sortDirection: "desc",
+  };
+}
+
+function normalizeExportQuery(query: ExplorerQuery): ExplorerQuery {
+  return {
+    search: query.search?.trim() || undefined,
+    branch: query.branch ?? "all",
+    model: query.model ?? "all",
+    payment: query.payment ?? "all",
+    preset: query.preset,
+    page: 1,
+    pageSize: 100,
+    sortField: query.sortField ?? "bg_to_delivery",
+    sortDirection: query.sortDirection ?? "desc",
+  };
+}
+
+function buildExportFileName(timestamp: string) {
+  const compact = timestamp.replace(/[-:]/g, "").replace(/\..+$/, "").replace("T", "-");
+  return `vehicle-explorer-${compact}.csv`;
+}
+
+function buildExportSubscriptionFingerprint(query: ExplorerQuery) {
+  return `daily:${JSON.stringify(normalizeExportQuery(query))}`;
+}
+
+function describeExportQuery(query: ExplorerQuery) {
+  const parts = [
+    query.search ? `search=${query.search}` : null,
+    query.branch && query.branch !== "all" ? `branch=${query.branch}` : null,
+    query.model && query.model !== "all" ? `model=${query.model}` : null,
+    query.payment && query.payment !== "all" ? `payment=${query.payment}` : null,
+    query.preset ? `preset=${query.preset}` : null,
+  ].filter(Boolean);
+
+  return parts.length > 0 ? parts.join(", ") : "all vehicles";
+}
+
+function canViewCompanyWideExports(user: User) {
+  return ["super_admin", "company_admin", "director"].includes(user.role);
 }

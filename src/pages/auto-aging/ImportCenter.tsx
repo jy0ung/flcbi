@@ -327,8 +327,13 @@ export default function ImportCenter() {
               <div className="p-3 rounded-md bg-destructive/10 border border-destructive/20 mb-4">
                 <p className="text-sm text-destructive font-medium">Validation could not complete for this workbook.</p>
                 <p className="text-xs text-muted-foreground mt-1">
-                  The worker stopped before a preview could be prepared. Retry the upload after checking the file.
+                  {preview.item.errorMessage ?? 'The worker stopped before a preview could be prepared. Retry the upload after checking the file.'}
                 </p>
+                {preview.item.attemptCount != null && preview.item.maxAttempts != null && (
+                  <p className="text-[11px] text-muted-foreground mt-1">
+                    Attempts: {preview.item.attemptCount}/{preview.item.maxAttempts}
+                  </p>
+                )}
               </div>
             )}
 
@@ -411,6 +416,11 @@ export default function ImportCenter() {
           <p className="text-sm text-muted-foreground mt-1">
             Resolving duplicates, computing KPIs, and refreshing snapshots using {publishMode} mode
           </p>
+          {preview?.item.attemptCount != null && preview?.item.maxAttempts != null && preview.item.attemptCount > 0 && (
+            <p className="text-xs text-muted-foreground mt-2">
+              Attempt {preview.item.attemptCount} of {preview.item.maxAttempts}
+            </p>
+          )}
         </div>
       )}
 

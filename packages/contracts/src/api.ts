@@ -8,6 +8,8 @@ import type {
   DashboardPreferences,
   ExplorerQuery,
   ExplorerResult,
+  ExportJob,
+  ExportSubscription,
   FilterOptions,
   ImportBatch,
   ImportPublishMode,
@@ -83,6 +85,35 @@ export interface PublishImportRequest {
   mode?: ImportPublishMode;
 }
 
+export interface ExportsResponse {
+  items: ExportJob[];
+}
+
+export interface CreateExplorerExportRequest {
+  query: ExplorerQuery;
+}
+
+export interface CreateExportResponse {
+  item: ExportJob;
+}
+
+export interface RetryExportResponse {
+  item: ExportJob;
+}
+
+export interface ExportSubscriptionsResponse {
+  items: ExportSubscription[];
+}
+
+export interface CreateExportSubscriptionRequest {
+  query: ExplorerQuery;
+  schedule?: ExportSubscription["schedule"];
+}
+
+export interface CreateExportSubscriptionResponse {
+  item: ExportSubscription;
+}
+
 export interface SlaPoliciesResponse {
   items: SlaPolicy[];
 }
@@ -151,4 +182,17 @@ export interface UpdateAdminUserRequest {
 
 export interface FilterOptionsResponse {
   options: FilterOptions;
+}
+
+export type DependencyStatus = "up" | "down" | "configured" | "not_configured";
+
+export interface PlatformHealthResponse {
+  status: "ok" | "degraded";
+  ready: boolean;
+  timestamp: string;
+  services: Record<string, DependencyStatus>;
+  mode: {
+    objectStorage: string;
+    auth: string;
+  };
 }

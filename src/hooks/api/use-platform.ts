@@ -1,7 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
   CreateAlertRequest,
+  CreateExplorerExportRequest,
+  CreateExportSubscriptionRequest,
   ExecutiveDashboardMetricId,
+  ExportJob,
   ExplorerPreset,
   ExplorerQueryRequest,
   ImportBatch,
@@ -15,11 +18,24 @@ function isImportPending(status?: ImportBatch["status"]) {
   return status === "uploaded" || status === "validating" || status === "normalization_in_progress" || status === "publish_in_progress";
 }
 
+function isExportPending(status?: ExportJob["status"]) {
+  return status === "queued" || status === "generation_in_progress";
+}
+
 export function useNavigationItems(enabled = true) {
   return useQuery({
     queryKey: ["navigation"],
     queryFn: () => apiClient.getNavigation(),
     enabled,
+  });
+}
+
+export function usePlatformHealth(enabled = true) {
+  return useQuery({
+    queryKey: ["platform", "health"],
+    queryFn: () => apiClient.getHealth(),
+    enabled,
+    refetchInterval: 10000,
   });
 }
 
@@ -150,6 +166,69 @@ export function usePublishImport() {
           ? { ...current, item: response.item }
           : current
       ));
+    },
+  });
+}
+
+export function useExports(enabled = true) {
+  return useQuery({
+    queryKey: ["exports"],
+    queryFn: () => apiClient.getExports(),
+    enabled,
+    refetchInterval: (query) => {
+      const exports = query.state.data?.items ?? [];
+      return exports.some((item) => isExportPending(item.status)) ? 1500 : false;
+    },
+  });
+}
+
+export function useCreateExplorerExport() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: CreateExplorerExportRequest) => apiClient.createExplorerExport(input),
+    onSuccess: (response) => {
+      void queryClient.invalidateQueries({ queryKey: ["exports"] });
+      void queryClient.invalidateQueries({ queryKey: ["notifications"] });
+      queryClient.setQueryData(["exports", response.item.id], response);
+    },
+  });
+}
+
+export function useExportSubscriptions(enabled = true) {
+  return useQuery({
+    queryKey: ["export-subscriptions"],
+    queryFn: () => apiClient.getExportSubscriptions(),
+    enabled,
+  });
+}
+
+export function useCreateExportSubscription() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: CreateExportSubscriptionRequest) => apiClient.createExportSubscription(input),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["export-subscriptions"] });
+    },
+  });
+}
+
+export function useDeleteExportSubscription() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => apiClient.deleteExportSubscription(id),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["export-subscriptions"] });
+    },
+  });
+}
+
+export function useRetryExport() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => apiClient.retryExport(id),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["exports"] });
+      void queryClient.invalidateQueries({ queryKey: ["notifications"] });
     },
   });
 }

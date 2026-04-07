@@ -15,6 +15,10 @@ export function downloadCsv(filename: string, rows: Record<string, unknown>[]) {
   ];
 
   const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8;" });
+  downloadBlob(filename, blob);
+}
+
+export function downloadBlob(filename: string, blob: Blob) {
   const url = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
   anchor.href = url;

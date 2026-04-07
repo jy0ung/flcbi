@@ -3,10 +3,14 @@ import { randomUUID } from "node:crypto";
 import {
   type AppRole,
   buildAgingSummary,
+  buildVehicleExplorerExportRows,
   compareMetricValue,
   type Branch,
   createDefaultDashboardPreferences,
   createDefaultSlaPolicies,
+  type ExportJob,
+  type ExportSubscription,
+  filterVehiclesForExplorer,
   getExecutiveDashboardMetricOption,
   getExecutiveMetricValue,
   getPermissionsForUser,
@@ -29,18 +33,36 @@ import {
   type ImportPublishMode,
   type NavigationItem,
   type Notification,
+  serializeCsvRows,
   type SlaPolicy,
+  sortVehiclesForExplorer,
   type User,
   type VehicleCanonical,
   type VehicleRaw,
 } from "@flcbi/contracts";
 import { ObjectStorageService } from "./object-storage.service.js";
-import type { PlatformRepository, PlatformRoleDefinition } from "../platform/platform.repository.js";
+import type {
+  ExportDownload,
+  PlatformRepository,
+  PlatformRoleDefinition,
+} from "../platform/platform.repository.js";
 
 interface ImportPreview {
   rows: VehicleRaw[];
   issues: DataQualityIssue[];
   missingColumns: string[];
+}
+
+interface ExportRecord {
+  userId: string;
+  item: ExportJob;
+  content: Buffer;
+}
+
+interface ExportSubscriptionRecord {
+  userId: string;
+  fingerprint: string;
+  item: ExportSubscription;
 }
 
 @Injectable()
@@ -54,6 +76,8 @@ export class PlatformStoreService implements PlatformRepository {
   private readonly slasByCompany = new Map<string, SlaPolicy[]>();
   private readonly dashboardPreferencesByUser = new Map<string, DashboardPreferences>();
   private readonly importPreviews = new Map<string, ImportPreview>();
+  private readonly exports = new Map<string, ExportRecord>();
+  private readonly exportSubscriptions = new Map<string, ExportSubscriptionRecord>();
   private readonly branches: Branch[] = [];
   private vehicles: VehicleCanonical[] = [];
   private imports: ImportBatch[] = [];
@@ -306,6 +330,10 @@ export class PlatformStoreService implements PlatformRepository {
       duplicateRows: parsed.issues.filter((issue) => issue.issueType === "duplicate").length,
       previewAvailable: true,
       storageKey,
+      processingStartedAt: new Date().toISOString(),
+      attemptCount: 1,
+      maxAttempts: 1,
+      canRetryPublish: false,
     };
 
     this.imports.unshift(item);
@@ -339,6 +367,9 @@ export class PlatformStoreService implements PlatformRepository {
     item.publishedAt = new Date().toISOString();
     item.datasetVersionId = `dataset-${Date.now()}`;
     item.publishMode = mode;
+    item.attemptCount = 1;
+    item.maxAttempts = 1;
+    item.canRetryPublish = false;
     this.lastRefresh = new Date().toISOString();
     this.addAuditEvent({
       action: "import_published",
@@ -357,6 +388,184 @@ export class PlatformStoreService implements PlatformRepository {
     );
     this.syncAlertNotifications(user);
     return item;
+  }
+
+  listExports(user: User) {
+    return [...this.exports.values()]
+      .filter((record) => canViewCompanyWideExports(user) || record.userId === user.id)
+      .map((record) => record.item)
+      .sort((left, right) => right.requestedAt.localeCompare(left.requestedAt));
+  }
+
+  listExportSubscriptions(user: User) {
+    return [...this.exportSubscriptions.values()]
+      .filter((record) => canViewCompanyWideExports(user) || record.userId === user.id)
+      .map((record) => record.item)
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+  }
+
+  async createExplorerExport(user: User, query: ExplorerQuery) {
+    const exportId = randomUUID();
+    const record = await this.generateExplorerExportRecord(user, exportId, normalizeExportQuery(query));
+    this.exports.set(exportId, record);
+    this.addAuditEvent({
+      action: "export_requested",
+      entity: "export_job",
+      entityId: exportId,
+      userId: user.id,
+      userName: user.name,
+      details: `Generated ${record.item.fileName} with ${record.item.totalRows} vehicle rows`,
+    });
+    this.addNotification(
+      user.id,
+      `Export ready: ${record.item.fileName}`,
+      `${record.item.totalRows} vehicles were prepared for download.`,
+      "success",
+      `export-complete:${exportId}`,
+    );
+    return record.item;
+  }
+
+  createExportSubscription(user: User, query: ExplorerQuery) {
+    const normalizedQuery = normalizeExportQuery(query);
+    const fingerprint = buildExportSubscriptionFingerprint(normalizedQuery);
+    const duplicate = [...this.exportSubscriptions.values()].find((record) => (
+      record.userId === user.id && record.fingerprint === fingerprint
+    ));
+    if (duplicate) {
+      throw new BadRequestException("A matching daily export subscription already exists");
+    }
+
+    const subscriptionId = randomUUID();
+    const createdAt = new Date().toISOString();
+    const item: ExportSubscription = {
+      id: subscriptionId,
+      requestedBy: user.name,
+      createdAt,
+      schedule: "daily",
+      kind: "vehicle_explorer_csv",
+      enabled: true,
+      query: normalizedQuery,
+    };
+
+    this.exportSubscriptions.set(subscriptionId, {
+      userId: user.id,
+      fingerprint,
+      item,
+    });
+    this.addAuditEvent({
+      action: "export_subscription_created",
+      entity: "export_subscription",
+      entityId: subscriptionId,
+      userId: user.id,
+      userName: user.name,
+      details: `Created daily export subscription for ${describeExportQuery(normalizedQuery)}`,
+    });
+    return item;
+  }
+
+  deleteExportSubscription(user: User, subscriptionId: string) {
+    const record = this.exportSubscriptions.get(subscriptionId);
+    if (!record || (!canViewCompanyWideExports(user) && record.userId !== user.id)) {
+      throw new NotFoundException(`Export subscription ${subscriptionId} not found`);
+    }
+
+    this.exportSubscriptions.delete(subscriptionId);
+    this.addAuditEvent({
+      action: "export_subscription_deleted",
+      entity: "export_subscription",
+      entityId: subscriptionId,
+      userId: user.id,
+      userName: user.name,
+      details: `Deleted daily export subscription for ${describeExportQuery(record.item.query)}`,
+    });
+  }
+
+  async retryExport(user: User, exportId: string) {
+    const record = this.exports.get(exportId);
+    if (!record || (!canViewCompanyWideExports(user) && record.userId !== user.id)) {
+      throw new NotFoundException(`Export ${exportId} not found`);
+    }
+    if (record.item.status !== "failed") {
+      throw new BadRequestException("Only failed exports can be retried");
+    }
+
+    const owner = this.findUserById(record.userId);
+    if (!owner) {
+      throw new NotFoundException(`User ${record.userId} not found`);
+    }
+
+    const nextRecord = await this.generateExplorerExportRecord(owner, exportId, record.item.query);
+    this.exports.set(exportId, nextRecord);
+    this.addAuditEvent({
+      action: "export_retry_requested",
+      entity: "export_job",
+      entityId: exportId,
+      userId: user.id,
+      userName: user.name,
+      details: `Retried ${nextRecord.item.fileName}`,
+    });
+    this.addNotification(
+      owner.id,
+      `Export ready: ${nextRecord.item.fileName}`,
+      `${nextRecord.item.totalRows} vehicles were prepared for download.`,
+      "success",
+      `export-complete:${exportId}`,
+    );
+    return nextRecord.item;
+  }
+
+  async getExportDownload(user: User, exportId: string): Promise<ExportDownload> {
+    const record = this.exports.get(exportId);
+    if (!record || (!canViewCompanyWideExports(user) && record.userId !== user.id)) {
+      throw new NotFoundException(`Export ${exportId} not found`);
+    }
+    if (record.item.status !== "completed" || !record.item.storageKey) {
+      throw new BadRequestException("This export is not ready to download yet");
+    }
+
+    const content = await this.objectStorage.getObject(record.item.storageKey);
+    return {
+      fileName: record.item.fileName,
+      contentType: "text/csv; charset=utf-8",
+      content,
+    };
+  }
+
+  private async generateExplorerExportRecord(user: User, exportId: string, query: ExplorerQuery): Promise<ExportRecord> {
+    const normalizedQuery = normalizeExportQuery(query);
+    const visibleVehicles = sortVehiclesForExplorer(
+      filterVehiclesForExplorer(this.getVisibleVehicles(user), normalizedQuery),
+      normalizedQuery,
+    );
+    const rows = buildVehicleExplorerExportRows(visibleVehicles);
+    const content = Buffer.from(serializeCsvRows(rows), "utf8");
+    const requestedAt = new Date().toISOString();
+    const fileName = buildExportFileName(requestedAt);
+    const storageKey = `exports/${user.companyId}/${exportId}/${fileName}`;
+    await this.objectStorage.putObject(storageKey, content);
+
+    return {
+      userId: user.id,
+      content,
+      item: {
+        id: exportId,
+        fileName,
+        requestedBy: user.name,
+        requestedAt,
+        status: "completed",
+        format: "csv",
+        kind: "vehicle_explorer_csv",
+        totalRows: visibleVehicles.length,
+        query: normalizedQuery,
+        storageKey,
+        completedAt: requestedAt,
+        processingStartedAt: requestedAt,
+        attemptCount: 1,
+        maxAttempts: 1,
+        canRetry: false,
+      },
+    };
   }
 
   getDashboardPreferences(user: User) {
@@ -586,4 +795,43 @@ function describeComparator(comparator: AlertRule["comparator"]) {
     default:
       return comparator;
   }
+}
+
+function normalizeExportQuery(query: ExplorerQuery): ExplorerQuery {
+  return {
+    search: query.search?.trim() || undefined,
+    branch: query.branch ?? "all",
+    model: query.model ?? "all",
+    payment: query.payment ?? "all",
+    preset: query.preset,
+    page: 1,
+    pageSize: 100,
+    sortField: query.sortField ?? "bg_to_delivery",
+    sortDirection: query.sortDirection ?? "desc",
+  };
+}
+
+function buildExportFileName(timestamp: string) {
+  const compact = timestamp.replace(/[-:]/g, "").replace(/\..+$/, "").replace("T", "-");
+  return `vehicle-explorer-${compact}.csv`;
+}
+
+function buildExportSubscriptionFingerprint(query: ExplorerQuery) {
+  return `daily:${JSON.stringify(normalizeExportQuery(query))}`;
+}
+
+function describeExportQuery(query: ExplorerQuery) {
+  const parts = [
+    query.search ? `search=${query.search}` : null,
+    query.branch && query.branch !== "all" ? `branch=${query.branch}` : null,
+    query.model && query.model !== "all" ? `model=${query.model}` : null,
+    query.payment && query.payment !== "all" ? `payment=${query.payment}` : null,
+    query.preset ? `preset=${query.preset}` : null,
+  ].filter(Boolean);
+
+  return parts.length > 0 ? parts.join(", ") : "all vehicles";
+}
+
+function canViewCompanyWideExports(user: User) {
+  return ["super_admin", "company_admin", "director"].includes(user.role);
 }

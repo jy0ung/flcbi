@@ -4,7 +4,8 @@ import { useAuth } from '@/contexts/AuthContext';
 import {
   Timer, LayoutDashboard, Bell, Search, Settings, Shield, FileText,
   LogOut, ChevronLeft, ChevronRight, Upload, Car, AlertTriangle, Gauge,
-  Map, History, Grid3X3, UserCircle
+  Download,
+  Map, History, Grid3X3, UserCircle, Activity
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useNavigationItems } from '@/hooks/api/use-platform';
@@ -20,12 +21,14 @@ const iconMap: Record<string, React.ElementType> = {
   FileText,
   Upload,
   Car,
+  Download,
   AlertTriangle,
   Gauge,
   Map,
   History,
   Grid3X3,
   UserCircle,
+  Activity,
 };
 
 interface AppSidebarProps {

@@ -7,19 +7,27 @@ import type {
   AlertsResponse,
   AuditResponse,
   CreateAlertRequest,
+  CreateExplorerExportRequest,
   CreateAdminUserRequest,
+  CreateExportResponse,
+  CreateExportSubscriptionRequest,
+  CreateExportSubscriptionResponse,
   DashboardPreferencesResponse,
   ExecutiveDashboardMetricId,
   ExplorerQueryRequest,
   ExplorerQueryResponse,
+  ExportsResponse,
+  ExportSubscriptionsResponse,
   ImportDetailResponse,
   ImportsResponse,
   MeResponse,
   NavigationResponse,
   NotificationsResponse,
+  PlatformHealthResponse,
   PublishImportRequest,
   PublishImportResponse,
   QualityIssuesResponse,
+  RetryExportResponse,
   SlaPoliciesResponse,
   SuccessResponse,
   UpdateAlertRequest,
@@ -141,6 +149,9 @@ export const apiClient = {
   me() {
     return request<MeResponse>("/me");
   },
+  getHealth() {
+    return request<PlatformHealthResponse>("/health");
+  },
   logout() {
     return request<{ success: boolean }>("/auth/logout", { method: "POST" });
   },
@@ -196,6 +207,80 @@ export const apiClient = {
       method: "POST",
       body: JSON.stringify({ mode }),
     });
+  },
+  getExports() {
+    return request<ExportsResponse>("/exports");
+  },
+  createExplorerExport(input: CreateExplorerExportRequest) {
+    return request<CreateExportResponse>("/exports", {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+  },
+  getExportSubscriptions() {
+    return request<ExportSubscriptionsResponse>("/exports/subscriptions");
+  },
+  createExportSubscription(input: CreateExportSubscriptionRequest) {
+    return request<CreateExportSubscriptionResponse>("/exports/subscriptions", {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+  },
+  deleteExportSubscription(id: string) {
+    return request<SuccessResponse>(`/exports/subscriptions/${encodeURIComponent(id)}/delete`, {
+      method: "POST",
+    });
+  },
+  retryExport(id: string) {
+    return request<RetryExportResponse>(`/exports/${encodeURIComponent(id)}/retry`, {
+      method: "POST",
+    });
+  },
+  async downloadExport(id: string) {
+    const token = await getSupabaseAccessToken();
+    const timeout = createTimeoutSignal(DEFAULT_REQUEST_TIMEOUT_MS);
+
+    let response: Response;
+    try {
+      response = await fetch(`${API_BASE_URL}/exports/${encodeURIComponent(id)}/download`, {
+        method: "GET",
+        signal: timeout.signal,
+        headers: {
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+      });
+    } catch (error) {
+      timeout.cleanup();
+      if (error instanceof DOMException && error.name === "AbortError") {
+        throw new ApiError(
+          `Request timed out after ${DEFAULT_REQUEST_TIMEOUT_MS / 1000} seconds`,
+          0,
+          "timeout",
+        );
+      }
+      throw new ApiError("Could not reach the API. Check your connection and try again.", 0, "network");
+    }
+    timeout.cleanup();
+
+    if (!response.ok) {
+      let message = `Request failed with ${response.status}`;
+      try {
+        const body = (await response.json()) as { message?: string | string[] };
+        if (Array.isArray(body.message)) message = body.message.join(", ");
+        else if (body.message) message = body.message;
+      } catch {
+        // Keep default message when body is not JSON.
+      }
+      throw new ApiError(message, response.status, "http");
+    }
+
+    const contentDisposition = response.headers.get("content-disposition") ?? "";
+    const fileNameMatch = /filename=\"?([^"]+)\"?/i.exec(contentDisposition);
+
+    return {
+      blob: await response.blob(),
+      fileName: fileNameMatch?.[1] ?? `export-${id}.csv`,
+    };
   },
   getAlerts() {
     return request<AlertsResponse>("/alerts");

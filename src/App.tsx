@@ -16,6 +16,7 @@ import Notifications from "@/pages/Notifications";
 import Alerts from "@/pages/Alerts";
 import AutoAgingDashboard from "@/pages/auto-aging/AutoAgingDashboard";
 import VehicleExplorer from "@/pages/auto-aging/VehicleExplorer";
+import Exports from "@/pages/auto-aging/Exports";
 import VehicleDetail from "@/pages/auto-aging/VehicleDetail";
 import ImportCenter from "@/pages/auto-aging/ImportCenter";
 import DataQuality from "@/pages/auto-aging/DataQuality";
@@ -24,6 +25,7 @@ import MappingAdmin from "@/pages/auto-aging/MappingAdmin";
 import ImportHistory from "@/pages/auto-aging/ImportHistory";
 import UserManagement from "@/pages/admin/UserManagement";
 import AuditLog from "@/pages/admin/AuditLog";
+import Operations from "@/pages/admin/Operations";
 import SettingsPage from "@/pages/admin/SettingsPage";
 import NotFound from "@/pages/NotFound";
 import Forbidden from "@/pages/Forbidden";
@@ -91,6 +93,17 @@ function ProtectedRoutes() {
         <Route path="/profile" element={<SettingsPage />} />
         <Route path="/auto-aging" element={<AutoAgingDashboard />} />
         <Route path="/auto-aging/vehicles" element={<VehicleExplorer />} />
+        <Route
+          path="/auto-aging/exports"
+          element={(
+            <RoleBoundary
+              roles={["company_admin", "super_admin", "director", "general_manager", "manager", "analyst"]}
+              title="Export Access Required"
+            >
+              <Exports />
+            </RoleBoundary>
+          )}
+        />
         <Route path="/auto-aging/vehicles/:chassisNo" element={<VehicleDetail />} />
         <Route
           path="/auto-aging/import"
@@ -126,6 +139,17 @@ function ProtectedRoutes() {
               title="Audit Access Required"
             >
               <AuditLog />
+            </RoleBoundary>
+          )}
+        />
+        <Route
+          path="/admin/operations"
+          element={(
+            <RoleBoundary
+              roles={["company_admin", "super_admin", "director"]}
+              title="Operations Access Required"
+            >
+              <Operations />
             </RoleBoundary>
           )}
         />

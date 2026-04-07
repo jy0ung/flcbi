@@ -1,13 +1,13 @@
 # FLC BI Platform
 
-FLC BI is structured as a production-oriented analytics application scaffold. The repo keeps the React application shell, but adds a real API surface, shared contracts, queue scaffolding, local object storage, infrastructure templates, and a Supabase-backed auth/data path.
+FLC BI is structured as a production-oriented analytics application. The repo keeps the React application shell, but adds a real API surface, shared contracts, queue-backed workers, local object storage, infrastructure templates, and a Supabase-backed auth/data path.
 
 ## What Is In This Repo
 
 - `src/`: React/Vite frontend using React Query and typed contracts from `@flcbi/contracts`
-- `apps/api`: NestJS API scaffold with auth, navigation, aging, imports, alerts, audit, and admin endpoints
-- `apps/worker`: BullMQ worker scaffold for imports, alerts, and export jobs
-- `apps/scheduler`: cron-driven queue scheduler scaffold
+- `apps/api`: NestJS API with auth, navigation, aging, imports, alerts, exports, audit, and admin endpoints
+- `apps/worker`: BullMQ worker handling imports, alerts, and export jobs
+- `apps/scheduler`: cron-driven queue scheduler for recurring background work
 - `packages/contracts`: shared domain types, API contracts, import parsing, KPI definitions, and analytics helpers
 - `supabase`: local config and SQL migrations for the Supabase migration path
 - `infra/dbt`: dbt-compatible warehouse skeleton for staging and mart models
@@ -101,11 +101,13 @@ Use the company admin account created by `npm run bootstrap:supabase` or `npm ru
 - When Redis is configured, import preview parsing runs asynchronously through the in-repo queue and worker instead of blocking the API upload request
 - Import publish orchestration now also runs through the imports queue and worker, so the API hands off the heavy publish step and the UI polls `publish_in_progress`
 - Alert evaluation now runs through the alerts queue and worker, with the scheduler enqueueing hourly evaluations and API-side rule changes enqueueing immediate company refreshes
+- Vehicle explorer CSV exports now run through the exports queue and worker, with completed files stored in the configured export bucket and surfaced in the in-app Exports page
+- Daily export subscriptions now fan out through the scheduler and exports worker, with saved explorer filters producing queued CSV jobs on the daily schedule
+- Admin users now have an Operations page that surfaces dependency health plus import/export attempts, failures, and queue progress metadata
 
 ## Current Limitations
 
 - Some non-critical flows still use lightweight local fallbacks when Supabase is not configured for the environment
-- Export jobs are still scaffold-level queue work; the scheduler and worker now handle alerts plus the async import pipeline, but exports do not have real business processing yet
 - OIDC/SCIM, dbt execution, observability exporters, and true warehouse promotion are not finished in this pass
 - The Supabase path is implemented and build-verified, but it still needs a live configured project to be exercised end to end
 
