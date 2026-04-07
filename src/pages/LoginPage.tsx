@@ -107,7 +107,12 @@ export default function LoginPage() {
           </Button>
         </form>
 
-        <div className="mt-6 text-center">
+        <div className="mt-6 text-center space-y-2">
+          {!isSignUp && (
+            <a href="/forgot-password" className="block text-sm text-muted-foreground hover:text-primary hover:underline">
+              Forgot your password?
+            </a>
+          )}
           <button
             type="button"
             onClick={() => { setIsSignUp(!isSignUp); setError(''); setSuccess(''); }}

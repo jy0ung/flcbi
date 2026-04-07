@@ -9,6 +9,8 @@ import { AppLayout } from "@/components/layout/AppLayout";
 import { Loader2 } from "lucide-react";
 
 import LoginPage from "@/pages/LoginPage";
+import ForgotPasswordPage from "@/pages/ForgotPasswordPage";
+import ResetPasswordPage from "@/pages/ResetPasswordPage";
 import ExecutiveDashboard from "@/pages/ExecutiveDashboard";
 import ModuleDirectory from "@/pages/ModuleDirectory";
 import Notifications from "@/pages/Notifications";
@@ -88,6 +90,8 @@ const App = () => (
         <BrowserRouter>
           <Routes>
             <Route path="/login" element={<AuthRoutes />} />
+            <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+            <Route path="/reset-password" element={<ResetPasswordPage />} />
             <Route path="/*" element={<ProtectedRoutes />} />
           </Routes>
         </BrowserRouter>
