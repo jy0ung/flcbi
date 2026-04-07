@@ -3,21 +3,42 @@ import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Loader2 } from 'lucide-react';
 
 export default function LoginPage() {
-  const { login } = useAuth();
-  const [email, setEmail] = useState('director@flc.com');
-  const [password, setPassword] = useState('demo');
+  const { login, signup } = useAuth();
+  const [isSignUp, setIsSignUp] = useState(false);
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [name, setName] = useState('');
   const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
   const [loading, setLoading] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+    setSuccess('');
     setLoading(true);
-    const ok = await login(email, password);
-    setLoading(false);
-    if (!ok) setError('Invalid credentials. Try director@flc.com, admin@flc.com, manager@flc.com, or analyst@flc.com');
+
+    if (isSignUp) {
+      if (!name.trim()) {
+        setError('Please enter your name');
+        setLoading(false);
+        return;
+      }
+      const { error: err } = await signup(email, password, name);
+      setLoading(false);
+      if (err) {
+        setError(err);
+      } else {
+        setSuccess('Account created successfully! You are now signed in.');
+      }
+    } else {
+      const { error: err } = await login(email, password);
+      setLoading(false);
+      if (err) setError(err);
+    }
   };
 
   return (
@@ -34,26 +55,66 @@ export default function LoginPage() {
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
+          {isSignUp && (
+            <div className="space-y-2">
+              <Label htmlFor="name" className="text-foreground">Full Name</Label>
+              <Input
+                id="name"
+                type="text"
+                value={name}
+                onChange={e => setName(e.target.value)}
+                className="bg-secondary border-border"
+                placeholder="Enter your full name"
+                required
+              />
+            </div>
+          )}
           <div className="space-y-2">
             <Label htmlFor="email" className="text-foreground">Email</Label>
-            <Input id="email" type="email" value={email} onChange={e => setEmail(e.target.value)} className="bg-secondary border-border" placeholder="Enter your email" />
+            <Input
+              id="email"
+              type="email"
+              value={email}
+              onChange={e => setEmail(e.target.value)}
+              className="bg-secondary border-border"
+              placeholder="Enter your email"
+              required
+            />
           </div>
           <div className="space-y-2">
             <Label htmlFor="password" className="text-foreground">Password</Label>
-            <Input id="password" type="password" value={password} onChange={e => setPassword(e.target.value)} className="bg-secondary border-border" placeholder="Enter password" />
+            <Input
+              id="password"
+              type="password"
+              value={password}
+              onChange={e => setPassword(e.target.value)}
+              className="bg-secondary border-border"
+              placeholder="Enter password"
+              minLength={6}
+              required
+            />
           </div>
+
           {error && <p className="text-destructive text-sm">{error}</p>}
+          {success && <p className="text-emerald-400 text-sm">{success}</p>}
+
           <Button type="submit" className="w-full" disabled={loading}>
-            {loading ? 'Signing in...' : 'Sign In'}
+            {loading ? (
+              <><Loader2 className="mr-2 h-4 w-4 animate-spin" />{isSignUp ? 'Creating account...' : 'Signing in...'}</>
+            ) : (
+              isSignUp ? 'Create Account' : 'Sign In'
+            )}
           </Button>
         </form>
 
-        <div className="mt-6 p-3 rounded-md bg-secondary/50 border border-border/50">
-          <p className="text-xs text-muted-foreground mb-1">Demo accounts (any password):</p>
-          <div className="text-xs text-muted-foreground space-y-0.5">
-            <p>director@flc.com • admin@flc.com</p>
-            <p>manager@flc.com • analyst@flc.com</p>
-          </div>
+        <div className="mt-6 text-center">
+          <button
+            type="button"
+            onClick={() => { setIsSignUp(!isSignUp); setError(''); setSuccess(''); }}
+            className="text-sm text-primary hover:underline"
+          >
+            {isSignUp ? 'Already have an account? Sign in' : "Don't have an account? Sign up"}
+          </button>
         </div>
       </div>
     </div>
