@@ -1,5 +1,10 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { VehicleCanonical } from "@flcbi/contracts";
+import {
+  applyVehicleCorrections,
+  type VehicleCanonical,
+  type VehicleCorrection,
+  type VehicleCorrectionField,
+} from "@flcbi/contracts";
 
 interface VehicleRow {
   id: string;
@@ -30,6 +35,12 @@ interface VehicleRow {
   outlet_received_to_delivery: number | null;
   bg_to_disb: number | null;
   delivery_to_disb: number | null;
+}
+
+interface VehicleCorrectionRow {
+  chassis_no: string;
+  field_name: VehicleCorrectionField;
+  value_text: string | null;
 }
 
 export interface WorkerProfileRow {
@@ -73,9 +84,12 @@ export async function fetchVehicles(client: SupabaseClient, companyId: string) {
     .order("bg_date", { ascending: false })
     .throwOnError();
 
-  return ((data ?? []) as VehicleRow[]).map((row) => ({
+  const rows = (data ?? []) as VehicleRow[];
+  const correctionsByChassis = await fetchVehicleCorrections(client, companyId, rows.map((row) => row.chassis_no));
+
+  return rows.map((row) => ({
     branchId: row.branch_id,
-    vehicle: mapVehicleRow(row),
+    vehicle: applyVehicleCorrections(mapVehicleRow(row), correctionsByChassis.get(row.chassis_no) ?? []),
   }));
 }
 
@@ -117,4 +131,39 @@ function mapVehicleRow(row: VehicleRow): VehicleCanonical {
     bg_to_disb: row.bg_to_disb,
     delivery_to_disb: row.delivery_to_disb,
   };
+}
+
+async function fetchVehicleCorrections(client: SupabaseClient, companyId: string, chassisNos: string[]) {
+  const correctionsByChassis = new Map<string, VehicleCorrection[]>();
+  if (chassisNos.length === 0) {
+    return correctionsByChassis;
+  }
+
+  const uniqueChassisNos = [...new Set(chassisNos)];
+  let query = client
+    .schema("app")
+    .from("vehicle_record_corrections")
+    .select("chassis_no, field_name, value_text")
+    .eq("company_id", companyId);
+  if (uniqueChassisNos.length <= 100) {
+    query = query.in("chassis_no", uniqueChassisNos);
+  }
+
+  const { data } = await query.throwOnError();
+
+  for (const row of (data ?? []) as VehicleCorrectionRow[]) {
+    const items = correctionsByChassis.get(row.chassis_no) ?? [];
+    items.push({
+      id: `${row.chassis_no}:${row.field_name}`,
+      chassisNo: row.chassis_no,
+      field: row.field_name,
+      value: row.value_text,
+      reason: "",
+      createdAt: "",
+      updatedAt: "",
+    });
+    correctionsByChassis.set(row.chassis_no, items);
+  }
+
+  return correctionsByChassis;
 }

@@ -7,11 +7,12 @@ import type {
   ExportJob,
   ExplorerPreset,
   ExplorerQueryRequest,
-  ImportBatch,
-  ImportDetailResponse,
-  NotificationsResponse,
-  UpdateAlertRequest,
-} from "@flcbi/contracts";
+    ImportBatch,
+    ImportDetailResponse,
+    NotificationsResponse,
+    UpdateVehicleCorrectionsRequest,
+    UpdateAlertRequest,
+  } from "@flcbi/contracts";
 import { apiClient } from "@/lib/api-client";
 
 function isImportPending(status?: ImportBatch["status"]) {
@@ -92,6 +93,19 @@ export function useVehicleDetail(chassisNo?: string, enabled = true) {
     queryKey: ["aging", "vehicle", chassisNo],
     queryFn: () => apiClient.getVehicle(chassisNo!),
     enabled: enabled && Boolean(chassisNo),
+  });
+}
+
+export function useUpdateVehicleCorrections() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ chassisNo, input }: { chassisNo: string; input: UpdateVehicleCorrectionsRequest }) =>
+      apiClient.updateVehicleCorrections(chassisNo, input),
+    onSuccess: (_response, variables) => {
+      void queryClient.invalidateQueries({ queryKey: ["aging", "vehicle", variables.chassisNo] });
+      void queryClient.invalidateQueries({ queryKey: ["aging", "summary"] });
+      void queryClient.invalidateQueries({ queryKey: ["aging", "explorer"] });
+    },
   });
 }
 

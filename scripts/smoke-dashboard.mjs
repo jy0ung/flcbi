@@ -212,6 +212,11 @@ try {
   assert(explorerUrl.searchParams.get("branch") === chosenBranch, "Branch filter not carried into explorer");
   assert(explorerUrl.searchParams.get("payment") === chosenPayment, "Payment filter not carried into explorer");
   assert(explorerUrl.searchParams.get("preset") === "registered_pending_delivery", "Preset not carried into explorer");
+  await page.getByTestId("vehicle-explorer-pagination-top").waitFor({ timeout: 15000 });
+  await page.getByTestId("vehicle-explorer-pagination-bottom").waitFor({ timeout: 15000 });
+  await page.getByTestId("vehicle-explorer-page-size").selectOption("25");
+  await page.waitForURL("**pageSize=25**", { timeout: 15000 });
+  await page.getByTestId("vehicle-explorer-pagination-summary").waitFor({ timeout: 15000 });
 
   console.log("step: import-history");
   await page.goto("/auto-aging/history", { waitUntil: "domcontentloaded" });
@@ -244,6 +249,7 @@ try {
   console.log("step: operations");
   await page.goto("/admin/operations", { waitUntil: "domcontentloaded" });
   await page.getByRole("heading", { name: "Operations" }).waitFor({ timeout: 15000 });
+  await page.getByTestId("operations-operational-alerts").waitFor({ timeout: 15000 });
   await page.getByTestId("operations-queue-imports").waitFor({ timeout: 15000 });
   await page.getByTestId("operations-queue-alerts").waitFor({ timeout: 15000 });
   await page.getByTestId("operations-queue-exports").waitFor({ timeout: 15000 });

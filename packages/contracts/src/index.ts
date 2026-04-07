@@ -6,3 +6,4 @@ export * from "./domain.js";
 export * from "./import-jobs.js";
 export * from "./imports.js";
 export * from "./kpis.js";
+export * from "./vehicle-corrections.js";

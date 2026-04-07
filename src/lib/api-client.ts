@@ -28,13 +28,14 @@ import type {
   PublishImportRequest,
   PublishImportResponse,
   QualityIssuesResponse,
-  RetryExportResponse,
-  SlaPoliciesResponse,
-  SuccessResponse,
-  UpdateAlertRequest,
-  UpdateAdminUserRequest,
-  VehicleDetailResponse,
-} from "@flcbi/contracts";
+    RetryExportResponse,
+    SlaPoliciesResponse,
+    SuccessResponse,
+    UpdateAlertRequest,
+    UpdateAdminUserRequest,
+    UpdateVehicleCorrectionsRequest,
+    VehicleDetailResponse,
+  } from "@flcbi/contracts";
 import { getSupabaseAccessToken } from "./supabase";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "/v1";
@@ -179,6 +180,12 @@ export const apiClient = {
   },
   getVehicle(chassisNo: string) {
     return request<VehicleDetailResponse>(`/aging/vehicles/${encodeURIComponent(chassisNo)}`);
+  },
+  updateVehicleCorrections(chassisNo: string, input: UpdateVehicleCorrectionsRequest) {
+    return request<VehicleDetailResponse>(`/aging/vehicles/${encodeURIComponent(chassisNo)}/corrections`, {
+      method: "PATCH",
+      body: JSON.stringify(input),
+    });
   },
   getQualityIssues() {
     return request<QualityIssuesResponse>("/aging/quality");

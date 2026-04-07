@@ -4,6 +4,7 @@ import {
   IMPORT_PREVIEW_JOB_NAME,
   type DataQualityIssue,
   type ImportPreviewJobPayload,
+  type Notification,
   type VehicleRaw,
   parseWorkbook,
   summarizeParsedWorkbook,
@@ -14,10 +15,13 @@ import {
   getSupabaseAdminClient,
   runBestEffort,
 } from "./supabase-admin.js";
+import { fetchProfiles } from "./vehicle-visibility.js";
 
 interface ImportJobRow {
   id: string;
   company_id: string;
+  file_name: string;
+  uploaded_by: string | null;
   storage_path: string | null;
   status: string;
   preview_available: boolean | null;
@@ -85,9 +89,40 @@ export async function processImportPreviewJob(job: Job<ImportPreviewJobPayload>)
         attempt_count: attemptCount,
         max_attempts: maxAttempts,
       })
-      .eq("company_id", importJob.company_id)
-      .eq("id", importJob.id)
-      .throwOnError();
+        .eq("company_id", importJob.company_id)
+        .eq("id", importJob.id)
+        .throwOnError();
+
+    if (summary.status === "failed" && importJob.uploaded_by) {
+      const profiles = await fetchProfiles(client, [importJob.uploaded_by]);
+      const profile = profiles.get(importJob.uploaded_by);
+
+      await runBestEffort(`import_preview_failure_audit:${importJob.id}`, async () => {
+        await addAuditEvent(client, {
+          companyId: importJob.company_id,
+          userId: importJob.uploaded_by!,
+          userName: profile?.display_name ?? importJob.uploaded_by!,
+          action: "import_validation_failed",
+          entity: "import_batch",
+          entityId: importJob.id,
+          details: `Validation failed for ${importJob.file_name}: missing columns ${parsed.missingColumns.join(", ")}`,
+        });
+      });
+      await runBestEffort(`import_preview_failure_notification:${importJob.id}`, async () => {
+        await createNotification(client, {
+          companyId: importJob.company_id,
+          userId: importJob.uploaded_by!,
+          title: `Import validation failed: ${importJob.file_name}`,
+          message: buildImportValidationFailureMessage(parsed.missingColumns),
+          type: "warning",
+          fingerprint: `import-validation-failed:${importJob.id}`,
+          metadata: {
+            importId: importJob.id,
+            missingColumns: parsed.missingColumns.join(","),
+          },
+        });
+      });
+    }
 
     return {
       ok: true,
@@ -134,6 +169,35 @@ export async function processImportPreviewJob(job: Job<ImportPreviewJobPayload>)
         .eq("id", importJob.id)
         .throwOnError();
     });
+    if (importJob.uploaded_by) {
+      const profiles = await fetchProfiles(client, [importJob.uploaded_by]);
+      const profile = profiles.get(importJob.uploaded_by);
+
+      await runBestEffort(`import_preview_processing_failure_audit:${importJob.id}`, async () => {
+        await addAuditEvent(client, {
+          companyId: importJob.company_id,
+          userId: importJob.uploaded_by!,
+          userName: profile?.display_name ?? importJob.uploaded_by!,
+          action: "import_validation_failed",
+          entity: "import_batch",
+          entityId: importJob.id,
+          details: `Validation failed for ${importJob.file_name}: ${error instanceof Error ? error.message : String(error)}`,
+        });
+      });
+      await runBestEffort(`import_preview_processing_failure_notification:${importJob.id}`, async () => {
+        await createNotification(client, {
+          companyId: importJob.company_id,
+          userId: importJob.uploaded_by!,
+          title: `Import validation failed: ${importJob.file_name}`,
+          message: "The workbook could not be validated. Check the file format and upload a corrected workbook.",
+          type: "error",
+          fingerprint: `import-validation-failed:${importJob.id}`,
+          metadata: {
+            importId: importJob.id,
+          },
+        });
+      });
+    }
     throw error;
   }
 }
@@ -142,7 +206,7 @@ async function fetchImportJob(client: SupabaseClient, importId: string) {
   const { data } = await client
     .schema("app")
     .from("import_jobs")
-    .select("id, company_id, storage_path, status, preview_available, processing_started_at, last_error_at, error_message, attempt_count, max_attempts")
+    .select("id, company_id, file_name, uploaded_by, storage_path, status, preview_available, processing_started_at, last_error_at, error_message, attempt_count, max_attempts")
     .eq("id", importId)
     .maybeSingle()
     .throwOnError();
@@ -292,4 +356,65 @@ async function persistImportIssues(
       .insert(chunk)
       .throwOnError();
   }
+}
+
+async function addAuditEvent(client: SupabaseClient, input: {
+  companyId: string;
+  userId: string;
+  userName: string;
+  action: string;
+  entity: string;
+  entityId: string;
+  details: string;
+}) {
+  await client
+    .schema("app")
+    .from("audit_events")
+    .insert({
+      company_id: input.companyId,
+      user_id: input.userId,
+      action: input.action,
+      entity: input.entity,
+      entity_id: input.entityId,
+      details: input.details,
+      metadata: { userName: input.userName },
+    })
+    .throwOnError();
+}
+
+async function createNotification(client: SupabaseClient, input: {
+  companyId: string;
+  userId: string;
+  title: string;
+  message: string;
+  type: Notification["type"];
+  fingerprint: string;
+  metadata?: Record<string, string | number | boolean | null>;
+}) {
+  await client
+    .schema("app")
+    .from("notifications")
+    .upsert({
+      company_id: input.companyId,
+      user_id: input.userId,
+      alert_rule_id: null,
+      title: input.title,
+      message: input.message,
+      type: input.type,
+      read: false,
+      fingerprint: input.fingerprint,
+      metadata: input.metadata ?? {},
+    }, {
+      onConflict: "user_id,fingerprint",
+      ignoreDuplicates: true,
+    })
+    .throwOnError();
+}
+
+function buildImportValidationFailureMessage(missingColumns: string[]) {
+  if (missingColumns.length === 0) {
+    return "The workbook has blocking validation issues. Review the preview issues and upload a corrected workbook.";
+  }
+
+  return `Missing required columns: ${missingColumns.join(", ")}. Upload a corrected workbook to continue.`;
 }

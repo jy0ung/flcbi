@@ -1,6 +1,7 @@
-import { BadRequestException, Inject, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ForbiddenException, Inject, Injectable, NotFoundException } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
 import {
+  applyVehicleCorrections,
   type AppRole,
   buildAgingSummary,
   buildVehicleExplorerExportRows,
@@ -36,8 +37,13 @@ import {
   serializeCsvRows,
   type SlaPolicy,
   sortVehiclesForExplorer,
+  type UpdateVehicleCorrectionsRequest,
   type User,
   type VehicleCanonical,
+  type VehicleCorrection,
+  VEHICLE_CORRECTION_FIELDS,
+  VEHICLE_CORRECTION_FIELD_LABELS,
+  type VehicleCorrectionField,
   type VehicleRaw,
 } from "@flcbi/contracts";
 import { ObjectStorageService } from "./object-storage.service.js";
@@ -65,6 +71,11 @@ interface ExportSubscriptionRecord {
   item: ExportSubscription;
 }
 
+interface VehicleCorrectionRecord {
+  companyId: string;
+  item: VehicleCorrection;
+}
+
 @Injectable()
 export class PlatformStoreService implements PlatformRepository {
   private readonly users: User[] = [];
@@ -78,6 +89,7 @@ export class PlatformStoreService implements PlatformRepository {
   private readonly importPreviews = new Map<string, ImportPreview>();
   private readonly exports = new Map<string, ExportRecord>();
   private readonly exportSubscriptions = new Map<string, ExportSubscriptionRecord>();
+  private readonly vehicleCorrections = new Map<string, VehicleCorrectionRecord>();
   private readonly branches: Branch[] = [];
   private vehicles: VehicleCanonical[] = [];
   private imports: ImportBatch[] = [];
@@ -650,7 +662,69 @@ export class PlatformStoreService implements PlatformRepository {
     return {
       vehicle,
       issues: this.getVisibleQualityIssues(user).filter((issue) => issue.chassisNo === chassisNo),
+      corrections: this.listVehicleCorrections(user.companyId, chassisNo),
     };
+  }
+
+  updateVehicleCorrections(user: User, chassisNo: string, input: UpdateVehicleCorrectionsRequest) {
+    if (!canManageVehicleCorrections(user)) {
+      throw new ForbiddenException("You do not have permission to edit vehicle corrections");
+    }
+
+    const baseVehicle = this.vehicles.find((item) => item.chassis_no === chassisNo);
+    if (!baseVehicle || !baseVehicle.import_batch_id) {
+      throw new NotFoundException(`Vehicle ${chassisNo} not found`);
+    }
+
+    const patch = this.normalizeVehicleCorrectionInput(input);
+    const changedFields = Object.keys(patch) as VehicleCorrectionField[];
+    if (changedFields.length === 0) {
+      throw new BadRequestException("No correction fields were provided");
+    }
+
+    const effectiveVehicle = applyVehicleCorrections(
+      baseVehicle,
+      changedFields.map((field) => ({ field, value: patch[field] ?? null })),
+    );
+    validateVehicleCorrectionChronology(effectiveVehicle, changedFields);
+
+    for (const field of changedFields) {
+      const key = buildVehicleCorrectionKey(user.companyId, chassisNo, field);
+      const normalizedValue = patch[field] ?? null;
+      const baseValue = normalizeCorrectionComparableValue(field, baseVehicle[field]);
+      if (normalizedValue === baseValue) {
+        this.vehicleCorrections.delete(key);
+        continue;
+      }
+
+      const existing = this.vehicleCorrections.get(key);
+      this.vehicleCorrections.set(key, {
+        companyId: user.companyId,
+        item: {
+          id: existing?.item.id ?? randomUUID(),
+          chassisNo,
+          field,
+          value: normalizedValue,
+          reason: input.reason.trim(),
+          createdAt: existing?.item.createdAt ?? new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          updatedBy: user.id,
+          updatedByName: user.name,
+        },
+      });
+    }
+
+    this.lastRefresh = new Date().toISOString();
+    this.addAuditEvent({
+      action: "vehicle_corrections_updated",
+      entity: "vehicle_record_correction",
+      entityId: chassisNo,
+      userId: user.id,
+      userName: user.name,
+      details: `Updated ${changedFields.map((field) => VEHICLE_CORRECTION_FIELD_LABELS[field]).join(", ")} for ${chassisNo}. Reason: ${input.reason.trim()}`,
+    });
+
+    return this.getVehicle(user, chassisNo);
   }
 
   getQualityIssues(user: User) {
@@ -702,8 +776,31 @@ export class PlatformStoreService implements PlatformRepository {
         }
         return true;
       })
+      .map((vehicle) => applyVehicleCorrections(vehicle, this.listVehicleCorrections(user.companyId, vehicle.chassis_no)))
       .map((vehicle) => this.maskVehicle(vehicle, user))
       .filter((vehicle): vehicle is VehicleCanonical => Boolean(vehicle));
+  }
+
+  private listVehicleCorrections(companyId: string, chassisNo: string) {
+    return [...this.vehicleCorrections.values()]
+      .filter((record) => record.companyId === companyId && record.item.chassisNo === chassisNo)
+      .map((record) => record.item)
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+  }
+
+  private normalizeVehicleCorrectionInput(input: UpdateVehicleCorrectionsRequest) {
+    const patch: Partial<Record<VehicleCorrectionField, string | null>> = {};
+
+    for (const field of VEHICLE_CORRECTION_FIELDS) {
+      const rawValue = input[field];
+      if (rawValue === undefined) {
+        continue;
+      }
+
+      patch[field] = normalizeVehicleCorrectionValue(field, rawValue);
+    }
+
+    return patch;
   }
 
   private getVisibleQualityIssues(user: User) {
@@ -834,4 +931,84 @@ function describeExportQuery(query: ExplorerQuery) {
 
 function canViewCompanyWideExports(user: User) {
   return ["super_admin", "company_admin", "director"].includes(user.role);
+}
+
+function canManageVehicleCorrections(user: User) {
+  return ["super_admin", "company_admin", "director"].includes(user.role);
+}
+
+function buildVehicleCorrectionKey(companyId: string, chassisNo: string, field: VehicleCorrectionField) {
+  return `${companyId}:${chassisNo}:${field}`;
+}
+
+function normalizeCorrectionComparableValue(field: VehicleCorrectionField, value: unknown) {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  if (typeof value !== "string") {
+    return String(value);
+  }
+  return normalizeVehicleCorrectionValue(field, value);
+}
+
+function normalizeVehicleCorrectionValue(field: VehicleCorrectionField, value: string) {
+  const normalized = value.trim();
+  if (field === "remark") {
+    return normalized.length > 0 ? normalized : null;
+  }
+  if (field === "payment_method" || field === "salesman_name" || field === "customer_name") {
+    if (!normalized) {
+      throw new BadRequestException(`${VEHICLE_CORRECTION_FIELD_LABELS[field]} cannot be blank`);
+    }
+    return normalized;
+  }
+  if (!normalized) {
+    return null;
+  }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(normalized)) {
+    throw new BadRequestException(`${VEHICLE_CORRECTION_FIELD_LABELS[field]} must use YYYY-MM-DD format`);
+  }
+
+  const parsed = new Date(`${normalized}T00:00:00.000Z`);
+  if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== normalized) {
+    throw new BadRequestException(`${VEHICLE_CORRECTION_FIELD_LABELS[field]} is not a valid calendar date`);
+  }
+
+  return normalized;
+}
+
+function validateVehicleCorrectionChronology(vehicle: VehicleCanonical, changedFields: VehicleCorrectionField[]) {
+  const changedDateFields = new Set(
+    changedFields.filter((field) => (
+      field === "bg_date" ||
+      field === "shipment_etd_pkg" ||
+      field === "date_received_by_outlet" ||
+      field === "reg_date" ||
+      field === "delivery_date" ||
+      field === "disb_date"
+    )),
+  );
+  if (changedDateFields.size === 0) {
+    return;
+  }
+
+  const orderedMilestones = [
+    { field: "bg_date", label: "BG Date", value: vehicle.bg_date },
+    { field: "shipment_etd_pkg", label: "Shipment ETD", value: vehicle.shipment_etd_pkg },
+    { field: "date_received_by_outlet", label: "Outlet Received", value: vehicle.date_received_by_outlet },
+    { field: "reg_date", label: "Registration Date", value: vehicle.reg_date },
+    { field: "delivery_date", label: "Delivery Date", value: vehicle.delivery_date },
+    { field: "disb_date", label: "Disbursement Date", value: vehicle.disb_date },
+  ] as const;
+
+  for (let index = 1; index < orderedMilestones.length; index += 1) {
+    const previous = orderedMilestones[index - 1];
+    const current = orderedMilestones[index];
+    if (!previous.value || !current.value) {
+      continue;
+    }
+    if (current.value < previous.value && (changedDateFields.has(previous.field) || changedDateFields.has(current.field))) {
+      throw new BadRequestException(`${current.label} cannot be earlier than ${previous.label}`);
+    }
+  }
 }

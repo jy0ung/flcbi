@@ -1,5 +1,10 @@
 import React from "react";
-import type { ExportJob, ImportBatch, QueueMetricsSummary } from "@flcbi/contracts";
+import type {
+  ExportJob,
+  ImportBatch,
+  PlatformOperationalAlert,
+  QueueMetricsSummary,
+} from "@flcbi/contracts";
 import { PageHeader } from "@/components/shared/PageHeader";
 import { QueryErrorState } from "@/components/shared/QueryErrorState";
 import { StatusBadge } from "@/components/shared/StatusBadge";
@@ -169,6 +174,22 @@ function MetricSummaryCard({
   );
 }
 
+function OperationalAlertCard({
+  alert,
+}: {
+  alert: PlatformOperationalAlert;
+}) {
+  return (
+    <div className="glass-panel p-4">
+      <div className="flex items-center gap-2">
+        <StatusBadge status={alert.severity} />
+        <div className="text-sm font-medium text-foreground">{alert.title}</div>
+      </div>
+      <div className="mt-2 text-sm text-muted-foreground">{alert.message}</div>
+    </div>
+  );
+}
+
 function ImportJobsTable({
   items,
   onRetry,
@@ -316,7 +337,7 @@ export default function Operations() {
       <div className="space-y-6 animate-fade-in">
         <PageHeader
           title="Operations"
-          description="Queue health and background job visibility"
+          description="Queue health, worker pressure, and background job visibility"
           breadcrumbs={[{ label: "FLC BI" }, { label: "Admin" }, { label: "Operations" }]}
         />
         <QueryErrorState
@@ -338,6 +359,7 @@ export default function Operations() {
   const exportSummary = summarizeJobs(exportItems);
   const metricsData = metrics.data;
   const counts = metricsData?.counts;
+  const operationalAlerts = metricsData?.operationalAlerts ?? [];
   const importJobTotal = counts?.available ? sumRecordValues(counts.importJobs) : importSummary.total;
   const exportJobTotal = counts?.available ? sumRecordValues(counts.exportJobs) : exportSummary.total;
   const importFailed = counts?.available ? (counts.importJobs.failed ?? 0) : importSummary.failed;
@@ -399,6 +421,26 @@ export default function Operations() {
           <DependencyCard key={key} label={key} status={value} />
         ))}
       </div>
+
+      <section className="space-y-3" data-testid="operations-operational-alerts">
+        <div>
+          <h2 className="text-sm font-semibold text-foreground">Operational Alerts</h2>
+          <p className="text-xs text-muted-foreground">
+            Derived warnings from the current queue snapshot and persisted job counts.
+          </p>
+        </div>
+        {operationalAlerts.length === 0 ? (
+          <div className="glass-panel p-4 text-sm text-muted-foreground">
+            No operational alerts in the latest snapshot.
+          </div>
+        ) : (
+          <div className="grid gap-4 xl:grid-cols-2">
+            {operationalAlerts.map((alert) => (
+              <OperationalAlertCard key={alert.code} alert={alert} />
+            ))}
+          </div>
+        )}
+      </section>
 
       <section className="space-y-3">
         <div className="flex items-center justify-between gap-3">

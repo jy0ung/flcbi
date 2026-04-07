@@ -25,6 +25,7 @@
     "smoke:scheduled-exports": "bash scripts/smoke-scheduled-exports.sh",
     "smoke:publish-modes": "bash scripts/smoke-publish-modes.sh",
     "smoke:notifications": "bash scripts/smoke-notifications.sh",
+    "smoke:import-failure-alerts": "bash scripts/smoke-import-failure-alerts.sh",
     "smoke:retries": "bash scripts/smoke-retries.sh",
     "smoke:runtime": "bash scripts/smoke-runtime.sh",
     "smoke:publish-rollback": "bash scripts/smoke-publish-rollback.sh",

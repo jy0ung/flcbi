@@ -8,12 +8,14 @@ import { StatusBadge } from '@/components/shared/StatusBadge';
 import { Button } from '@/components/ui/button';
 import { toast } from '@/components/ui/sonner';
 import { useAuth } from '@/contexts/AuthContext';
-import { BellRing, Download, Search, X } from 'lucide-react';
+import { BellRing, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Download, Search, X } from 'lucide-react';
 import { useCreateExplorerExport, useCreateExportSubscription, useExplorer } from '@/hooks/api/use-platform';
 
 const presetOptions: Array<{ value: ExplorerPreset; label: string }> = Object.entries(EXPLORER_PRESET_LABELS).map(
   ([value, label]) => ({ value: value as ExplorerPreset, label }),
 );
+const explorerPageSizeOptions = [25, 50, 100] as const;
+const defaultExplorerPageSize = 50;
 
 const allowedSortFields: Array<keyof VehicleCanonical> = [
   'bg_date',
@@ -48,6 +50,46 @@ function parsePage(value: string | null) {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 1;
 }
 
+function parsePageSize(value: string | null) {
+  const parsed = Number(value);
+  return explorerPageSizeOptions.find((option) => option === parsed) ?? defaultExplorerPageSize;
+}
+
+function formatExplorerRange(total: number, page: number, pageSize: number) {
+  if (total === 0) {
+    return 'No vehicles found';
+  }
+
+  const start = (page - 1) * pageSize + 1;
+  const end = Math.min(total, page * pageSize);
+  return `Showing ${start}-${end} of ${total} vehicles`;
+}
+
+function buildPaginationItems(page: number, totalPages: number) {
+  if (totalPages <= 7) {
+    return Array.from({ length: totalPages }, (_, index) => index + 1);
+  }
+
+  const items: Array<number | 'ellipsis-start' | 'ellipsis-end'> = [1];
+  const windowStart = Math.max(2, page - 1);
+  const windowEnd = Math.min(totalPages - 1, page + 1);
+
+  if (windowStart > 2) {
+    items.push('ellipsis-start');
+  }
+
+  for (let current = windowStart; current <= windowEnd; current += 1) {
+    items.push(current);
+  }
+
+  if (windowEnd < totalPages - 1) {
+    items.push('ellipsis-end');
+  }
+
+  items.push(totalPages);
+  return items;
+}
+
 export default function VehicleExplorer() {
   const navigate = useNavigate();
   const { hasRole } = useAuth();
@@ -61,6 +103,7 @@ export default function VehicleExplorer() {
   const sortField = parseSortField(searchParams.get('sortField'));
   const sortDir = parseSortDirection(searchParams.get('sortDirection'));
   const page = parsePage(searchParams.get('page'));
+  const pageSize = parsePageSize(searchParams.get('pageSize'));
 
   const updateParams = (updates: Record<string, string | undefined>) => {
     const next = new URLSearchParams(searchParams);
@@ -80,7 +123,7 @@ export default function VehicleExplorer() {
     payment: paymentFilter,
     preset,
     page,
-    pageSize: 50,
+    pageSize,
     sortField,
     sortDirection: sortDir,
   };
@@ -94,6 +137,24 @@ export default function VehicleExplorer() {
   const payments = result?.filterOptions.payments ?? [];
   const presetLabel = preset ? EXPLORER_PRESET_LABELS[preset] : undefined;
   const canExport = hasRole(['company_admin', 'super_admin', 'director', 'general_manager', 'manager', 'analyst']);
+  const totalPages = result ? Math.max(1, Math.ceil(result.total / result.pageSize)) : 1;
+  const paginationItems = buildPaginationItems(page, totalPages);
+  const [pageInput, setPageInput] = React.useState(String(page));
+
+  React.useEffect(() => {
+    setPageInput(String(page));
+  }, [page]);
+
+  React.useEffect(() => {
+    if (!result) {
+      return;
+    }
+
+    const lastPage = Math.max(1, Math.ceil(result.total / result.pageSize));
+    if (page > lastPage) {
+      updateParams({ page: String(lastPage) });
+    }
+  }, [page, result, searchParams]);
 
   const toggleSort = (field: keyof VehicleCanonical) => {
     if (sortField === field) {
@@ -108,6 +169,26 @@ export default function VehicleExplorer() {
       sortDirection: 'desc',
       page: '1',
     });
+  };
+
+  const handlePageChange = (nextPage: number) => {
+    const boundedPage = Math.min(Math.max(nextPage, 1), totalPages);
+    updateParams({ page: String(boundedPage) });
+  };
+
+  const handlePageSizeChange = (nextPageSize: number) => {
+    updateParams({ pageSize: String(nextPageSize), page: '1' });
+  };
+
+  const handlePageJump = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const requestedPage = Number(pageInput);
+    if (!Number.isFinite(requestedPage)) {
+      setPageInput(String(page));
+      return;
+    }
+
+    handlePageChange(requestedPage);
   };
 
   const SortHeader = ({ field, label }: { field: keyof VehicleCanonical; label: string }) => (
@@ -161,9 +242,9 @@ export default function VehicleExplorer() {
         title="Vehicle Explorer"
         description={
           presetLabel
-            ? `${result ? `${result.total} vehicles` : 'Loading vehicles'} in ${presetLabel}`
+            ? `${result ? `${formatExplorerRange(result.total, result.page, result.pageSize)} in ${presetLabel}` : 'Loading vehicles'}`
             : result
-              ? `${result.items.length} of ${result.total} vehicles`
+              ? formatExplorerRange(result.total, result.page, result.pageSize)
               : 'Loading vehicles'
         }
         breadcrumbs={[{ label: 'FLC BI' }, { label: 'Auto Aging' }, { label: 'Vehicle Explorer' }]}
@@ -256,6 +337,62 @@ export default function VehicleExplorer() {
         </select>
       </div>
 
+      {result && (
+        <div
+          className="glass-panel p-4 flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between"
+          data-testid="vehicle-explorer-pagination-top"
+        >
+          <div className="space-y-1">
+            <p className="text-sm font-medium text-foreground" data-testid="vehicle-explorer-pagination-summary">
+              {formatExplorerRange(result.total, result.page, result.pageSize)}
+            </p>
+            <p className="text-xs text-muted-foreground">
+              Page {result.page} of {totalPages}
+            </p>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <label htmlFor="vehicle-explorer-page-size" className="text-xs font-medium text-muted-foreground">
+              Rows per page
+            </label>
+            <select
+              id="vehicle-explorer-page-size"
+              data-testid="vehicle-explorer-page-size"
+              value={pageSize}
+              onChange={(event) => handlePageSizeChange(Number(event.target.value))}
+              className="h-8 rounded-md bg-secondary border border-border px-3 text-xs text-foreground"
+            >
+              {explorerPageSizeOptions.map((option) => (
+                <option key={option} value={option}>
+                  {option}
+                </option>
+              ))}
+            </select>
+
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => handlePageChange(page - 1)}
+              disabled={page === 1}
+              data-testid="vehicle-explorer-previous-page-top"
+            >
+              <ChevronLeft className="mr-1 h-3.5 w-3.5" />
+              Previous
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => handlePageChange(page + 1)}
+              disabled={page >= totalPages}
+              data-testid="vehicle-explorer-next-page-top"
+            >
+              Next
+              <ChevronRight className="ml-1 h-3.5 w-3.5" />
+            </Button>
+          </div>
+        </div>
+      )}
+
       <div className="glass-panel overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
@@ -309,26 +446,104 @@ export default function VehicleExplorer() {
         </div>
         {isLoading && <p className="text-xs text-muted-foreground text-center py-3">Loading vehicles...</p>}
         {result && (
-          <div className="flex items-center justify-between px-4 py-3 border-t border-border/50 text-xs text-muted-foreground">
-            <span>Page {result.page} of {Math.max(1, Math.ceil(result.total / result.pageSize))}</span>
-            <div className="flex items-center gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => updateParams({ page: String(Math.max(1, page - 1)) })}
-                disabled={page === 1}
-              >
-                Previous
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => updateParams({ page: String(page + 1) })}
-                disabled={result.page * result.pageSize >= result.total}
-              >
-                Next
-              </Button>
+          <div
+            className="flex flex-col gap-3 border-t border-border/50 px-4 py-4"
+            data-testid="vehicle-explorer-pagination-bottom"
+          >
+            <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+              <div className="text-xs text-muted-foreground">
+                {formatExplorerRange(result.total, result.page, result.pageSize)}
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => handlePageChange(1)}
+                  disabled={page === 1}
+                  data-testid="vehicle-explorer-first-page"
+                >
+                  <ChevronsLeft className="mr-1 h-3.5 w-3.5" />
+                  First
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => handlePageChange(page - 1)}
+                  disabled={page === 1}
+                  data-testid="vehicle-explorer-previous-page"
+                >
+                  <ChevronLeft className="mr-1 h-3.5 w-3.5" />
+                  Previous
+                </Button>
+
+                {paginationItems.map((item) => {
+                  if (typeof item !== 'number') {
+                    return (
+                      <span key={item} className="px-2 text-xs text-muted-foreground">
+                        …
+                      </span>
+                    );
+                  }
+
+                  return (
+                    <Button
+                      key={item}
+                      variant={item === page ? 'default' : 'outline'}
+                      size="sm"
+                      onClick={() => handlePageChange(item)}
+                      aria-current={item === page ? 'page' : undefined}
+                      data-testid={`vehicle-explorer-page-${item}`}
+                    >
+                      {item}
+                    </Button>
+                  );
+                })}
+
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => handlePageChange(page + 1)}
+                  disabled={page >= totalPages}
+                  data-testid="vehicle-explorer-next-page"
+                >
+                  Next
+                  <ChevronRight className="ml-1 h-3.5 w-3.5" />
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => handlePageChange(totalPages)}
+                  disabled={page >= totalPages}
+                  data-testid="vehicle-explorer-last-page"
+                >
+                  Last
+                  <ChevronsRight className="ml-1 h-3.5 w-3.5" />
+                </Button>
+              </div>
             </div>
+
+            <form className="flex flex-wrap items-center gap-2" onSubmit={handlePageJump}>
+              <label htmlFor="vehicle-explorer-page-jump" className="text-xs font-medium text-muted-foreground">
+                Go to page
+              </label>
+              <input
+                id="vehicle-explorer-page-jump"
+                data-testid="vehicle-explorer-page-jump"
+                type="number"
+                min={1}
+                max={totalPages}
+                value={pageInput}
+                onChange={(event) => setPageInput(event.target.value)}
+                className="h-8 w-20 rounded-md bg-secondary border border-border px-3 text-xs text-foreground"
+              />
+              <Button type="submit" variant="outline" size="sm">
+                Go
+              </Button>
+              <span className="text-xs text-muted-foreground">
+                Max page: {totalPages}
+              </span>
+            </form>
           </div>
         )}
       </div>

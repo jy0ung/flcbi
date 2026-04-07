@@ -16,8 +16,10 @@ import type {
   NavigationItem,
   Notification,
   SlaPolicy,
+  UpdateVehicleCorrectionsRequest,
   User,
   VehicleCanonical,
+  VehicleCorrection,
 } from "@flcbi/contracts";
 
 type Awaitable<T> = T | Promise<T>;
@@ -39,6 +41,7 @@ export interface ImportDetail {
 export interface VehicleDetail {
   vehicle: VehicleCanonical;
   issues: DataQualityIssue[];
+  corrections: VehicleCorrection[];
 }
 
 export interface ExportDownload {
@@ -96,6 +99,11 @@ export interface PlatformRepository {
   ): Awaitable<AgingSummary>;
   queryExplorer(user: User, query: ExplorerQuery): Awaitable<ExplorerResult>;
   getVehicle(user: User, chassisNo: string): Awaitable<VehicleDetail>;
+  updateVehicleCorrections(
+    user: User,
+    chassisNo: string,
+    input: UpdateVehicleCorrectionsRequest,
+  ): Awaitable<VehicleDetail>;
   getQualityIssues(user: User): Awaitable<DataQualityIssue[]>;
   markNotificationRead(user: User, notificationId: string): Awaitable<void>;
   markAllNotificationsRead(user: User): Awaitable<void>;

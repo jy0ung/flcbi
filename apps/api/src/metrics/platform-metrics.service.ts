@@ -3,6 +3,7 @@ import type {
   DependencyStatus,
   ExportJob,
   ImportBatch,
+  PlatformOperationalAlert,
   PlatformMetricsSummaryResponse,
 } from "@flcbi/contracts";
 import { ObjectStorageService } from "../storage/object-storage.service.js";
@@ -82,6 +83,7 @@ export class PlatformMetricsService {
       },
       counts: createUnavailableCounts(),
       collectionErrors: [],
+      operationalAlerts: [],
     };
 
     if (supabase === "up") {
@@ -99,6 +101,8 @@ export class PlatformMetricsService {
         });
       }
     }
+
+    summary.operationalAlerts = buildOperationalAlerts(summary);
 
     return summary;
   }
@@ -258,6 +262,86 @@ function createUnavailableCounts(): PlatformMetricsSummaryResponse["counts"] {
       unread: null,
     },
   };
+}
+
+function buildOperationalAlerts(summary: PlatformMetricsSummaryResponse): PlatformOperationalAlert[] {
+  const alerts: PlatformOperationalAlert[] = [];
+
+  if (summary.services.queue === "down") {
+    alerts.push({
+      code: "queue_health_down",
+      severity: "error",
+      title: "Queue health is down",
+      message: "Background processing is unavailable. Import, alert, and export jobs may stop progressing until Redis or workers recover.",
+    });
+  }
+
+  for (const [queueName, snapshot] of Object.entries(summary.queues)) {
+    if (snapshot.health === "up" && snapshot.workers === 0) {
+      alerts.push({
+        code: `queue_workers_missing_${queueName}`,
+        severity: "error",
+        title: `${capitalize(queueName)} queue has no workers`,
+        message: "Jobs can be accepted but nothing is currently consuming them. Check the worker process on the test server.",
+      });
+    }
+
+    if (snapshot.counts.waiting > 0 && snapshot.workers === 0) {
+      alerts.push({
+        code: `queue_backlog_${queueName}`,
+        severity: "warning",
+        title: `${capitalize(queueName)} jobs are waiting`,
+        message: `${snapshot.counts.waiting} queued job${snapshot.counts.waiting === 1 ? "" : "s"} are waiting without an active worker.`,
+      });
+    }
+  }
+
+  if (!summary.counts.available) {
+    alerts.push({
+      code: "supabase_counts_unavailable",
+      severity: "warning",
+      title: "Supabase metrics counts are unavailable",
+      message: "Queue health is live, but record-level counts could not be collected from Supabase for this snapshot.",
+    });
+    return dedupeOperationalAlerts(alerts);
+  }
+
+  const failedImportJobs = summary.counts.importJobs.failed ?? 0;
+  if (failedImportJobs > 0) {
+    alerts.push({
+      code: "failed_import_jobs",
+      severity: "warning",
+      title: "Failed import jobs need attention",
+      message: `${failedImportJobs} import job${failedImportJobs === 1 ? "" : "s"} are currently failed. Review the import queue and retry or replace the workbook.`,
+    });
+  }
+
+  const failedExportJobs = summary.counts.exportJobs.failed ?? 0;
+  if (failedExportJobs > 0) {
+    alerts.push({
+      code: "failed_export_jobs",
+      severity: "warning",
+      title: "Failed export jobs need attention",
+      message: `${failedExportJobs} export job${failedExportJobs === 1 ? "" : "s"} are currently failed. Review retries from the Operations page.`,
+    });
+  }
+
+  return dedupeOperationalAlerts(alerts);
+}
+
+function dedupeOperationalAlerts(items: PlatformOperationalAlert[]) {
+  const seen = new Set<string>();
+  return items.filter((item) => {
+    if (seen.has(item.code)) {
+      return false;
+    }
+    seen.add(item.code);
+    return true;
+  });
+}
+
+function capitalize(value: string) {
+  return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
 function summarizeQueueHealth(statuses: DependencyStatus[]): DependencyStatus {

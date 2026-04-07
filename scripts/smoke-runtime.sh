@@ -51,6 +51,7 @@ print("Runtime health and metrics endpoint checks passed")
 PY
 
 bash "${ROOT_DIR}/scripts/smoke-notifications.sh"
+bash "${ROOT_DIR}/scripts/smoke-import-failure-alerts.sh"
 bash "${ROOT_DIR}/scripts/smoke-scheduled-exports.sh"
 node "${ROOT_DIR}/scripts/smoke-dashboard.mjs"
 

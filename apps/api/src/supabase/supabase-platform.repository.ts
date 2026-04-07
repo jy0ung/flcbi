@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Inject,
   Injectable,
   InternalServerErrorException,
@@ -8,6 +9,7 @@ import {
   UnauthorizedException,
 } from "@nestjs/common";
 import {
+  applyVehicleCorrections,
   buildVehicleExplorerExportRows,
   buildAlertNotificationFingerprint,
   buildAgingSummary,
@@ -42,8 +44,13 @@ import {
   serializeCsvRows,
   type SlaPolicy,
   sortVehiclesForExplorer,
+  type UpdateVehicleCorrectionsRequest,
   type User,
   type VehicleCanonical,
+  type VehicleCorrection,
+  VEHICLE_CORRECTION_FIELDS,
+  VEHICLE_CORRECTION_FIELD_LABELS,
+  type VehicleCorrectionField,
   type VehicleRaw,
 } from "@flcbi/contracts";
 import { randomUUID } from "node:crypto";
@@ -214,6 +221,18 @@ interface VehicleRow {
   outlet_received_to_delivery: number | null;
   bg_to_disb: number | null;
   delivery_to_disb: number | null;
+}
+
+interface VehicleCorrectionRow {
+  id: string;
+  company_id: string;
+  chassis_no: string;
+  field_name: VehicleCorrectionField;
+  value_text: string | null;
+  reason: string;
+  updated_by: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
 interface RawImportRow {
@@ -862,7 +881,7 @@ export class SupabasePlatformRepository implements PlatformRepository {
       }
     }
 
-    const processed = await this.processUploadedImportPreview(companyId, id, fileBuffer);
+    const processed = await this.processUploadedImportPreview(user, companyId, id, fileBuffer);
     this.importPreviews.set(id, processed.parsed);
 
     const [item] = await this.mapImportRows([processed.importRow]);
@@ -1442,9 +1461,21 @@ export class SupabasePlatformRepository implements PlatformRepository {
       return this.fallback.getSummary(user, filters);
     }
 
-    const visibleVehicles = (await this.fetchVisibleVehicles(user, filters)).filter((vehicle) =>
-      filters?.preset ? matchesExplorerPreset(vehicle, filters.preset) : true,
-    );
+    const visibleVehicles = (await this.fetchVisibleVehicles(user)).filter((vehicle) => {
+      if (filters?.branch && filters.branch !== "all" && vehicle.branch_code !== filters.branch) {
+        return false;
+      }
+      if (filters?.model && filters.model !== "all" && vehicle.model !== filters.model) {
+        return false;
+      }
+      if (filters?.payment && filters.payment !== "all" && vehicle.payment_method !== filters.payment) {
+        return false;
+      }
+      if (filters?.preset && !matchesExplorerPreset(vehicle, filters.preset)) {
+        return false;
+      }
+      return true;
+    });
     const visibleVehicleIds = new Set(visibleVehicles.map((vehicle) => vehicle.chassis_no));
     const visibleIssues = (await this.getQualityIssues(user))
       .filter((issue) => visibleVehicleIds.has(issue.chassisNo));
@@ -1459,11 +1490,7 @@ export class SupabasePlatformRepository implements PlatformRepository {
       return this.fallback.queryExplorer(user, query);
     }
 
-    const visibleVehicles = await this.fetchVisibleVehicles(user, {
-      branch: query.branch,
-      model: query.model,
-      payment: query.payment,
-    });
+    const visibleVehicles = await this.fetchVisibleVehicles(user);
     return queryVehicles(visibleVehicles, query);
   }
 
@@ -1479,7 +1506,131 @@ export class SupabasePlatformRepository implements PlatformRepository {
     }
 
     const issues = (await this.getQualityIssues(user)).filter((issue) => issue.chassisNo === chassisNo);
-    return { vehicle, issues };
+    const corrections = await this.fetchVehicleCorrections(this.requireCompanyId(user), [chassisNo]);
+    return {
+      vehicle,
+      issues,
+      corrections: corrections.get(chassisNo) ?? [],
+    };
+  }
+
+  async updateVehicleCorrections(
+    user: User,
+    chassisNo: string,
+    input: UpdateVehicleCorrectionsRequest,
+  ): Promise<VehicleDetail> {
+    if (!this.supabase.isConfigured()) {
+      return this.fallback.updateVehicleCorrections(user, chassisNo, input);
+    }
+    if (!canManageVehicleCorrections(user)) {
+      throw new ForbiddenException("You do not have permission to edit vehicle corrections");
+    }
+
+    const companyId = this.requireCompanyId(user);
+    const dbUserId = await this.resolveDbUserIdFromUser(user);
+    if (!dbUserId) {
+      throw new NotFoundException("The editing user could not be resolved");
+    }
+
+    const baseRows = await this.fetchVisibleVehicleRows(user);
+    const baseRow = baseRows.find((item) => item.chassis_no === chassisNo);
+    if (!baseRow) {
+      throw new NotFoundException(`Vehicle ${chassisNo} not found`);
+    }
+
+    const baseVehicle = this.mapVehicleRow(baseRow);
+    const existingCorrections = await this.fetchVehicleCorrections(companyId, [chassisNo]);
+    const existingByField = new Map(
+      (existingCorrections.get(chassisNo) ?? []).map((item) => [item.field, item.value]),
+    );
+    const patch = this.normalizeVehicleCorrectionInput(input);
+    const changedFields = Object.keys(patch) as VehicleCorrectionField[];
+    if (changedFields.length === 0) {
+      throw new BadRequestException("No correction fields were provided");
+    }
+
+    for (const field of changedFields) {
+      const nextValue = patch[field] ?? null;
+      const baseValue = normalizeCorrectionComparableValue(field, baseVehicle[field]);
+      if (nextValue === baseValue) {
+        existingByField.delete(field);
+      } else {
+        existingByField.set(field, nextValue);
+      }
+    }
+
+    const effectiveVehicle = applyVehicleCorrections(
+      baseVehicle,
+      Array.from(existingByField.entries()).map(([field, value]) => ({ field, value })),
+    );
+    validateVehicleCorrectionChronology(effectiveVehicle, changedFields);
+
+    const upsertRows = changedFields
+      .map((field) => {
+        const nextValue = patch[field] ?? null;
+        const baseValue = normalizeCorrectionComparableValue(field, baseVehicle[field]);
+        if (nextValue === baseValue) {
+          return null;
+        }
+        return {
+          company_id: companyId,
+          chassis_no: chassisNo,
+          field_name: field,
+          value_text: nextValue,
+          reason: input.reason.trim(),
+          updated_by: dbUserId,
+        };
+      })
+      .filter((item): item is {
+        company_id: string;
+        chassis_no: string;
+        field_name: VehicleCorrectionField;
+        value_text: string | null;
+        reason: string;
+        updated_by: string;
+      } => Boolean(item));
+    const deleteFields = changedFields.filter((field) => {
+      const nextValue = patch[field] ?? null;
+      const baseValue = normalizeCorrectionComparableValue(field, baseVehicle[field]);
+      return nextValue === baseValue;
+    });
+
+    const client = this.supabase.getAdminClient();
+    if (upsertRows.length > 0) {
+      const { error } = await client
+        .schema("app")
+        .from("vehicle_record_corrections")
+        .upsert(upsertRows, {
+          onConflict: "company_id,chassis_no,field_name",
+        });
+      if (error) {
+        throw new InternalServerErrorException(error.message);
+      }
+    }
+
+    if (deleteFields.length > 0) {
+      const { error } = await client
+        .schema("app")
+        .from("vehicle_record_corrections")
+        .delete()
+        .eq("company_id", companyId)
+        .eq("chassis_no", chassisNo)
+        .in("field_name", deleteFields);
+      if (error) {
+        throw new InternalServerErrorException(error.message);
+      }
+    }
+
+    await this.addAuditEvent({
+      action: "vehicle_corrections_updated",
+      entity: "vehicle_record_correction",
+      entityId: chassisNo,
+      userId: user.id,
+      userName: user.name,
+      details: `Updated ${changedFields.map((field) => VEHICLE_CORRECTION_FIELD_LABELS[field]).join(", ")} for ${chassisNo}. Reason: ${input.reason.trim()}`,
+    });
+
+    return this.getVehicle(user, chassisNo);
   }
 
   async getQualityIssues(user: User): Promise<DataQualityIssue[]> {
@@ -2036,7 +2187,7 @@ export class SupabasePlatformRepository implements PlatformRepository {
     return ((data ?? []) as RawImportRow[]).map((row) => this.mapRawImportRow(row));
   }
 
-  private async processUploadedImportPreview(companyId: string, importId: string, fileBuffer: Buffer) {
+  private async processUploadedImportPreview(user: User, companyId: string, importId: string, fileBuffer: Buffer) {
     const branchIdByCode = await this.fetchBranchIdByCode(companyId);
     const startedAt = new Date().toISOString();
     await this.setImportAttemptMetadata(companyId, importId, {
@@ -2047,26 +2198,89 @@ export class SupabasePlatformRepository implements PlatformRepository {
       attempt_count: 1,
       max_attempts: 1,
     });
-    const parsed = parseWorkbook(
-      fileBuffer.buffer.slice(
-        fileBuffer.byteOffset,
-        fileBuffer.byteOffset + fileBuffer.byteLength,
-      ),
-    );
 
     try {
+      const parsed = parseWorkbook(
+        fileBuffer.buffer.slice(
+          fileBuffer.byteOffset,
+          fileBuffer.byteOffset + fileBuffer.byteLength,
+        ),
+      );
       await this.clearImportPreviewArtifacts(companyId, importId);
       await this.persistRawImportRows(companyId, importId, parsed.rows, branchIdByCode);
       await this.replaceImportIssues(companyId, importId, parsed.issues, branchIdByCode, parsed.rows, null);
       const importRow = await this.updateImportPreviewJob(companyId, importId, parsed);
+      if (importRow.status === "failed" && importRow.uploaded_by) {
+        await this.runBestEffort(`import_preview_failure_audit:${importId}`, async () => {
+          await this.addAuditEvent({
+            action: "import_validation_failed",
+            entity: "import_batch",
+            entityId: importId,
+            userId: user.id,
+            userName: user.name,
+            details: `Validation failed for ${importRow.file_name}: missing columns ${parsed.missingColumns.join(", ")}`,
+          });
+        });
+        await this.runBestEffort(`import_preview_failure_notification:${importId}`, async () => {
+          await this.createNotification({
+            companyId,
+            userId: importRow.uploaded_by!,
+            title: `Import validation failed: ${importRow.file_name}`,
+            message: this.buildImportValidationFailureMessage(parsed.missingColumns),
+            type: "warning",
+            fingerprint: `import-validation-failed:${importId}`,
+            metadata: {
+              importId,
+              missingColumns: parsed.missingColumns.join(","),
+            },
+          });
+        });
+      }
       return { parsed, importRow };
     } catch (error) {
       await this.runBestEffort(`import_preview_cleanup:${importId}`, async () => {
         await this.clearImportPreviewArtifacts(companyId, importId);
       });
-      await this.runBestEffort(`import_preview_mark_failed:${importId}`, async () => {
-        await this.markImportPreviewFailed(companyId, importId, error instanceof Error ? error.message : String(error), 1, 1);
-      });
+      let failedImportRow: Pick<ImportJobRow, "file_name" | "uploaded_by"> | null = null;
+      try {
+        failedImportRow = await this.markImportPreviewFailed(
+          companyId,
+          importId,
+          error instanceof Error ? error.message : String(error),
+          1,
+          1,
+        );
+      } catch (markFailedError) {
+        const message = markFailedError instanceof Error ? markFailedError.message : String(markFailedError);
+        this.logger.warn(`import_preview_mark_failed:${importId} failed: ${message}`);
+      }
+      const failedImportUploadedBy = failedImportRow?.uploaded_by ?? null;
+      const failedImportFileName = failedImportRow?.file_name ?? "import workbook";
+      if (failedImportUploadedBy) {
+        await this.runBestEffort(`import_preview_processing_failure_audit:${importId}`, async () => {
+          await this.addAuditEvent({
+            action: "import_validation_failed",
+            entity: "import_batch",
+            entityId: importId,
+            userId: user.id,
+            userName: user.name,
+            details: `Validation failed for ${failedImportFileName}: ${error instanceof Error ? error.message : String(error)}`,
+          });
+        });
+        await this.runBestEffort(`import_preview_processing_failure_notification:${importId}`, async () => {
+          await this.createNotification({
+            companyId,
+            userId: failedImportUploadedBy,
+            title: `Import validation failed: ${failedImportFileName}`,
+            message: "The workbook could not be validated. Check the file format and upload a corrected workbook.",
+            type: "error",
+            fingerprint: `import-validation-failed:${importId}`,
+            metadata: {
+              importId,
+            },
+          });
+        });
+      }
       throw error;
     }
   }
@@ -2466,10 +2680,35 @@ export class SupabasePlatformRepository implements PlatformRepository {
     }
   }
 
-  private async fetchVisibleVehicles(
-    user: User,
-    filters?: { branch?: string; model?: string; payment?: string; preset?: ExplorerPreset },
-  ) {
+  private async fetchVisibleVehicles(user: User) {
+    const rows = await this.fetchVisibleVehicleRows(user);
+    const correctionsByChassis = await this.fetchVehicleCorrections(
+      this.requireCompanyId(user),
+      rows.map((row) => row.chassis_no),
+    );
+
+    return rows.map((row) => applyVehicleCorrections(
+      this.mapVehicleRow(row),
+      correctionsByChassis.get(row.chassis_no) ?? [],
+    ));
+  }
+
+  private normalizeVehicleCorrectionInput(input: UpdateVehicleCorrectionsRequest) {
+    const patch: Partial<Record<VehicleCorrectionField, string | null>> = {};
+
+    for (const field of VEHICLE_CORRECTION_FIELDS) {
+      const rawValue = input[field];
+      if (rawValue === undefined) {
+        continue;
+      }
+
+      patch[field] = normalizeVehicleCorrectionValue(field, rawValue);
+    }
+
+    return patch;
+  }
+
+  private async fetchVisibleVehicleRows(user: User) {
     const companyId = this.requireCompanyId(user);
     const client = this.supabase.getAdminClient();
     let query = client
@@ -2482,22 +2721,85 @@ export class SupabasePlatformRepository implements PlatformRepository {
     if (visibleBranchId && ["manager", "sales", "accounts"].includes(user.role)) {
       query = query.eq("branch_id", visibleBranchId);
     }
-    if (filters?.branch && filters.branch !== "all") {
-      query = query.eq("branch_code", filters.branch);
-    }
-    if (filters?.model && filters.model !== "all") {
-      query = query.eq("model", filters.model);
-    }
-    if (filters?.payment && filters.payment !== "all") {
-      query = query.eq("payment_method", filters.payment);
-    }
 
     const { data, error } = await query.order("bg_date", { ascending: false });
     if (error) {
       throw new InternalServerErrorException(error.message);
     }
 
-    return ((data ?? []) as VehicleRow[]).map((row) => this.mapVehicleRow(row));
+    return (data ?? []) as VehicleRow[];
+  }
+
+  private async fetchVehicleCorrections(companyId: string, chassisNos: string[]) {
+    const correctionsByChassis = new Map<string, VehicleCorrection[]>();
+    if (chassisNos.length === 0) {
+      return correctionsByChassis;
+    }
+
+    const client = this.supabase.getAdminClient();
+    const uniqueChassisNos = [...new Set(chassisNos)];
+    let query = client
+      .schema("app")
+      .from("vehicle_record_corrections")
+      .select("id, company_id, chassis_no, field_name, value_text, reason, updated_by, created_at, updated_at")
+      .eq("company_id", companyId)
+      .order("updated_at", { ascending: false });
+    if (uniqueChassisNos.length <= 100) {
+      query = query.in("chassis_no", uniqueChassisNos);
+    }
+
+    const { data, error } = await query;
+    if (error) {
+      throw new InternalServerErrorException(error.message);
+    }
+
+    const rows = (data ?? []) as VehicleCorrectionRow[];
+    const userNamesById = await this.fetchProfileDisplayNames(
+      rows
+        .map((row) => row.updated_by)
+        .filter((value): value is string => Boolean(value)),
+    );
+
+    for (const row of rows) {
+      const items = correctionsByChassis.get(row.chassis_no) ?? [];
+      items.push({
+        id: row.id,
+        chassisNo: row.chassis_no,
+        field: row.field_name,
+        value: row.value_text,
+        reason: row.reason,
+        updatedAt: row.updated_at,
+        createdAt: row.created_at,
+        updatedBy: row.updated_by,
+        updatedByName: row.updated_by ? userNamesById.get(row.updated_by) ?? row.updated_by : null,
+      });
+      correctionsByChassis.set(row.chassis_no, items);
+    }
+
+    return correctionsByChassis;
+  }
+
+  private async fetchProfileDisplayNames(userIds: string[]) {
+    const names = new Map<string, string>();
+    if (userIds.length === 0) {
+      return names;
+    }
+
+    const client = this.supabase.getAdminClient();
+    const { data, error } = await client
+      .schema("app")
+      .from("user_profiles")
+      .select("id, display_name")
+      .in("id", [...new Set(userIds)]);
+    if (error) {
+      throw new InternalServerErrorException(error.message);
+    }
+
+    for (const row of (data ?? []) as Array<{ id: string; display_name: string | null }>) {
+      names.set(row.id, row.display_name ?? row.id);
+    }
+
+    return names;
   }
 
   private mapVehicleRow(row: VehicleRow): VehicleCanonical {
@@ -2695,7 +2997,7 @@ export class SupabasePlatformRepository implements PlatformRepository {
     maxAttempts: number,
   ) {
     const client = this.supabase.getAdminClient();
-    const { error } = await client
+    const { data, error } = await client
       .schema("app")
       .from("import_jobs")
       .update({
@@ -2712,11 +3014,15 @@ export class SupabasePlatformRepository implements PlatformRepository {
         max_attempts: maxAttempts,
       })
       .eq("company_id", companyId)
-      .eq("id", importId);
+      .eq("id", importId)
+      .select("file_name, uploaded_by")
+      .single();
 
     if (error) {
       throw new InternalServerErrorException(error.message);
     }
+
+    return data as Pick<ImportJobRow, "file_name" | "uploaded_by">;
   }
 
   private async setImportAttemptMetadata(
@@ -2823,6 +3129,14 @@ export class SupabasePlatformRepository implements PlatformRepository {
     if (error) {
       throw new InternalServerErrorException(error.message);
     }
+  }
+
+  private buildImportValidationFailureMessage(missingColumns: string[]) {
+    if (missingColumns.length === 0) {
+      return "The workbook has blocking validation issues. Review the preview issues and upload a corrected workbook.";
+    }
+
+    return `Missing required columns: ${missingColumns.join(", ")}. Upload a corrected workbook to continue.`;
   }
 
   private async syncAlertNotifications(user: User) {
@@ -2964,4 +3278,80 @@ function describeExportQuery(query: ExplorerQuery) {
 
 function canViewCompanyWideExports(user: User) {
   return ["super_admin", "company_admin", "director"].includes(user.role);
+}
+
+function canManageVehicleCorrections(user: User) {
+  return ["super_admin", "company_admin", "director"].includes(user.role);
+}
+
+function normalizeCorrectionComparableValue(field: VehicleCorrectionField, value: unknown) {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  if (typeof value !== "string") {
+    return String(value);
+  }
+  return normalizeVehicleCorrectionValue(field, value);
+}
+
+function normalizeVehicleCorrectionValue(field: VehicleCorrectionField, value: string) {
+  const normalized = value.trim();
+  if (field === "remark") {
+    return normalized.length > 0 ? normalized : null;
+  }
+  if (field === "payment_method" || field === "salesman_name" || field === "customer_name") {
+    if (!normalized) {
+      throw new BadRequestException(`${VEHICLE_CORRECTION_FIELD_LABELS[field]} cannot be blank`);
+    }
+    return normalized;
+  }
+  if (!normalized) {
+    return null;
+  }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(normalized)) {
+    throw new BadRequestException(`${VEHICLE_CORRECTION_FIELD_LABELS[field]} must use YYYY-MM-DD format`);
+  }
+
+  const parsed = new Date(`${normalized}T00:00:00.000Z`);
+  if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== normalized) {
+    throw new BadRequestException(`${VEHICLE_CORRECTION_FIELD_LABELS[field]} is not a valid calendar date`);
+  }
+
+  return normalized;
+}
+
+function validateVehicleCorrectionChronology(vehicle: VehicleCanonical, changedFields: VehicleCorrectionField[]) {
+  const changedDateFields = new Set(
+    changedFields.filter((field) => (
+      field === "bg_date" ||
+      field === "shipment_etd_pkg" ||
+      field === "date_received_by_outlet" ||
+      field === "reg_date" ||
+      field === "delivery_date" ||
+      field === "disb_date"
+    )),
+  );
+  if (changedDateFields.size === 0) {
+    return;
+  }
+
+  const orderedMilestones = [
+    { field: "bg_date", label: "BG Date", value: vehicle.bg_date },
+    { field: "shipment_etd_pkg", label: "Shipment ETD", value: vehicle.shipment_etd_pkg },
+    { field: "date_received_by_outlet", label: "Outlet Received", value: vehicle.date_received_by_outlet },
+    { field: "reg_date", label: "Registration Date", value: vehicle.reg_date },
+    { field: "delivery_date", label: "Delivery Date", value: vehicle.delivery_date },
+    { field: "disb_date", label: "Disbursement Date", value: vehicle.disb_date },
+  ] as const;
+
+  for (let index = 1; index < orderedMilestones.length; index += 1) {
+    const previous = orderedMilestones[index - 1];
+    const current = orderedMilestones[index];
+    if (!previous.value || !current.value) {
+      continue;
+    }
+    if (current.value < previous.value && (changedDateFields.has(previous.field) || changedDateFields.has(current.field))) {
+      throw new BadRequestException(`${current.label} cannot be earlier than ${previous.label}`);
+    }
+  }
 }

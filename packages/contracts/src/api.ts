@@ -21,6 +21,7 @@ import type {
   VehicleCanonical,
   DataQualityIssue,
 } from "./domain.js";
+import type { VehicleCorrection } from "./vehicle-corrections.js";
 
 export interface LoginRequest {
   email: string;
@@ -60,6 +61,21 @@ export interface ExplorerQueryResponse {
 export interface VehicleDetailResponse {
   vehicle: VehicleCanonical;
   issues: DataQualityIssue[];
+  corrections: VehicleCorrection[];
+}
+
+export interface UpdateVehicleCorrectionsRequest {
+  reason: string;
+  bg_date?: string;
+  shipment_etd_pkg?: string;
+  date_received_by_outlet?: string;
+  reg_date?: string;
+  delivery_date?: string;
+  disb_date?: string;
+  payment_method?: string;
+  salesman_name?: string;
+  customer_name?: string;
+  remark?: string;
 }
 
 export interface QualityIssuesResponse {
@@ -210,6 +226,15 @@ export interface PlatformMetricsCollectionError {
   message: string;
 }
 
+export type PlatformOperationalAlertSeverity = "info" | "warning" | "error";
+
+export interface PlatformOperationalAlert {
+  code: string;
+  severity: PlatformOperationalAlertSeverity;
+  title: string;
+  message: string;
+}
+
 export interface PlatformMetricsCountsSummary {
   available: boolean;
   vehicleRecords: number | null;
@@ -245,4 +270,5 @@ export interface PlatformMetricsSummaryResponse {
   };
   counts: PlatformMetricsCountsSummary;
   collectionErrors: PlatformMetricsCollectionError[];
+  operationalAlerts: PlatformOperationalAlert[];
 }

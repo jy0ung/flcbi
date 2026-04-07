@@ -10,7 +10,7 @@ import type {
 } from "@flcbi/contracts";
 import { CurrentUser } from "../common/current-user.decorator.js";
 import { PLATFORM_REPOSITORY, type PlatformRepository } from "../platform/platform.repository.js";
-import { ExplorerQueryDto, UpdateSlaDto } from "./aging.dto.js";
+import { ExplorerQueryDto, UpdateSlaDto, UpdateVehicleCorrectionsDto } from "./aging.dto.js";
 import { Roles } from "../common/roles.decorator.js";
 import { AgingSummaryQueryDto } from "./aging-summary.dto.js";
 
@@ -42,6 +42,16 @@ export class AgingController {
     @Param("chassisNo") chassisNo: string,
   ): Promise<VehicleDetailResponse> {
     return await this.store.getVehicle(user, chassisNo);
+  }
+
+  @Roles("company_admin", "super_admin", "director")
+  @Patch("vehicles/:chassisNo/corrections")
+  async updateVehicleCorrections(
+    @CurrentUser() user: User,
+    @Param("chassisNo") chassisNo: string,
+    @Body() body: UpdateVehicleCorrectionsDto,
+  ): Promise<VehicleDetailResponse> {
+    return await this.store.updateVehicleCorrections(user, chassisNo, body);
   }
 
   @Get("quality")
