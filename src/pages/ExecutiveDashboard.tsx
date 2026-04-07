@@ -31,7 +31,8 @@ export default function ExecutiveDashboard() {
   // Load preferences
   useEffect(() => {
     async function loadPrefs() {
-      const userId = user?.id || 'default';
+      if (!user?.id) { setPrefsLoaded(true); return; }
+      const userId = user.id;
       const { data } = await supabase
         .from('dashboard_preferences')
         .select('*')
