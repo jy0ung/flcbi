@@ -11,6 +11,8 @@ import { NavigationController } from "./navigation/navigation.controller.js";
 import { NotificationsController } from "./notifications/notifications.controller.js";
 import { PreferencesController } from "./preferences/preferences.controller.js";
 import { ExportsController } from "./exports/exports.controller.js";
+import { MetricsController } from "./metrics/metrics.controller.js";
+import { PlatformMetricsService } from "./metrics/platform-metrics.service.js";
 import { PlatformStoreService } from "./storage/platform-store.service.js";
 import { PlatformAuthSessionService } from "./auth/platform-auth-session.service.js";
 import { ApiAuthGuard } from "./common/api-auth.guard.js";
@@ -38,10 +40,12 @@ import { ExportQueueService } from "./queues/export-queue.service.js";
     NotificationsController,
     PreferencesController,
     ExportsController,
+    MetricsController,
   ],
   providers: [
     PlatformStoreService,
     SupabasePlatformRepository,
+    PlatformMetricsService,
     PlatformAuthSessionService,
     ObjectStorageService,
     SupabaseAdminService,

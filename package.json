@@ -26,6 +26,7 @@
     "smoke:publish-modes": "bash scripts/smoke-publish-modes.sh",
     "smoke:notifications": "bash scripts/smoke-notifications.sh",
     "smoke:retries": "bash scripts/smoke-retries.sh",
+    "smoke:runtime": "bash scripts/smoke-runtime.sh",
     "smoke:publish-rollback": "bash scripts/smoke-publish-rollback.sh",
     "smoke:dashboard": "node scripts/smoke-dashboard.mjs",
     "generate:import-template": "node scripts/generate-import-template.mjs",

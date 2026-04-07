@@ -1,10 +1,11 @@
 import { Controller, Get, HttpException, HttpStatus, Inject } from "@nestjs/common";
+import type { DependencyStatus } from "@flcbi/contracts";
 import { Public } from "../common/public.decorator.js";
 import { ObjectStorageService } from "../storage/object-storage.service.js";
 import { SupabaseAdminService } from "../supabase/supabase-admin.service.js";
+import { AlertQueueService } from "../queues/alert-queue.service.js";
+import { ExportQueueService } from "../queues/export-queue.service.js";
 import { ImportQueueService } from "../queues/import-queue.service.js";
-
-type DependencyStatus = "up" | "down" | "configured" | "not_configured";
 
 @Controller("health")
 export class HealthController {
@@ -12,6 +13,8 @@ export class HealthController {
     @Inject(SupabaseAdminService) private readonly supabase: SupabaseAdminService,
     @Inject(ObjectStorageService) private readonly objectStorage: ObjectStorageService,
     @Inject(ImportQueueService) private readonly importQueue: ImportQueueService,
+    @Inject(AlertQueueService) private readonly alertQueue: AlertQueueService,
+    @Inject(ExportQueueService) private readonly exportQueue: ExportQueueService,
   ) {}
 
   @Public()
@@ -31,16 +34,23 @@ export class HealthController {
   }
 
   private async buildHealthReport() {
-    const [supabase, objectStorage, queue] = await Promise.all([
+    const [supabase, objectStorage, queueImports, queueAlerts, queueExports] = await Promise.all([
       this.supabase.checkHealth(),
       this.objectStorage.checkHealth(),
       this.importQueue.checkHealth(),
+      this.alertQueue.checkHealth(),
+      this.exportQueue.checkHealth(),
     ]);
+
+    const queue = summarizeQueueHealth([queueImports, queueAlerts, queueExports]);
 
     const services: Record<string, DependencyStatus> = {
       api: "up",
       objectStorage,
       queue,
+      queueImports,
+      queueAlerts,
+      queueExports,
       supabase,
     };
     const queueReady = queue !== "down";
@@ -57,4 +67,17 @@ export class HealthController {
       },
     };
   }
+}
+
+function summarizeQueueHealth(statuses: DependencyStatus[]): DependencyStatus {
+  if (statuses.some((status) => status === "down")) {
+    return "down";
+  }
+  if (statuses.some((status) => status === "up")) {
+    return "up";
+  }
+  if (statuses.some((status) => status === "configured")) {
+    return "configured";
+  }
+  return "not_configured";
 }

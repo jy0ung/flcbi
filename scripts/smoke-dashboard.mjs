@@ -244,6 +244,10 @@ try {
   console.log("step: operations");
   await page.goto("/admin/operations", { waitUntil: "domcontentloaded" });
   await page.getByRole("heading", { name: "Operations" }).waitFor({ timeout: 15000 });
+  await page.getByTestId("operations-queue-imports").waitFor({ timeout: 15000 });
+  await page.getByTestId("operations-queue-alerts").waitFor({ timeout: 15000 });
+  await page.getByTestId("operations-queue-exports").waitFor({ timeout: 15000 });
+  await page.getByTestId("operations-metric-vehicle-records").waitFor({ timeout: 15000 });
   await page.getByTestId("operations-imports-table").waitFor({ timeout: 15000 });
   await page.getByTestId("operations-exports-table").waitFor({ timeout: 15000 });
 

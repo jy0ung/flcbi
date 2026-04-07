@@ -186,6 +186,8 @@ export interface FilterOptionsResponse {
 
 export type DependencyStatus = "up" | "down" | "configured" | "not_configured";
 
+export type QueueMetricState = "waiting" | "active" | "completed" | "failed" | "delayed" | "paused";
+
 export interface PlatformHealthResponse {
   status: "ok" | "degraded";
   ready: boolean;
@@ -195,4 +197,52 @@ export interface PlatformHealthResponse {
     objectStorage: string;
     auth: string;
   };
+}
+
+export interface QueueMetricsSummary {
+  health: DependencyStatus;
+  workers: number;
+  counts: Record<QueueMetricState, number>;
+}
+
+export interface PlatformMetricsCollectionError {
+  source: string;
+  message: string;
+}
+
+export interface PlatformMetricsCountsSummary {
+  available: boolean;
+  vehicleRecords: number | null;
+  importJobs: Partial<Record<ImportBatch["status"], number>>;
+  exportJobs: Partial<Record<ExportJob["status"], number>>;
+  exportSubscriptions: {
+    enabled: number | null;
+    disabled: number | null;
+  };
+  alertRules: {
+    enabled: number | null;
+    disabled: number | null;
+  };
+  notifications: {
+    read: number | null;
+    unread: number | null;
+  };
+}
+
+export interface PlatformMetricsSummaryResponse {
+  status: "ok" | "degraded";
+  ready: boolean;
+  timestamp: string;
+  services: Record<string, DependencyStatus>;
+  mode: {
+    objectStorage: string;
+    auth: string;
+  };
+  queues: {
+    imports: QueueMetricsSummary;
+    alerts: QueueMetricsSummary;
+    exports: QueueMetricsSummary;
+  };
+  counts: PlatformMetricsCountsSummary;
+  collectionErrors: PlatformMetricsCollectionError[];
 }

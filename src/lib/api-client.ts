@@ -24,6 +24,7 @@ import type {
   NavigationResponse,
   NotificationsResponse,
   PlatformHealthResponse,
+  PlatformMetricsSummaryResponse,
   PublishImportRequest,
   PublishImportResponse,
   QualityIssuesResponse,
@@ -151,6 +152,9 @@ export const apiClient = {
   },
   getHealth() {
     return request<PlatformHealthResponse>("/health");
+  },
+  getMetricsSummary() {
+    return request<PlatformMetricsSummaryResponse>("/metrics/summary");
   },
   logout() {
     return request<{ success: boolean }>("/auth/logout", { method: "POST" });

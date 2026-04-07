@@ -39,6 +39,15 @@ export function usePlatformHealth(enabled = true) {
   });
 }
 
+export function usePlatformMetricsSummary(enabled = true) {
+  return useQuery({
+    queryKey: ["platform", "metrics-summary"],
+    queryFn: () => apiClient.getMetricsSummary(),
+    enabled,
+    refetchInterval: 10000,
+  });
+}
+
 export function useAgingSummary(
   filters?: { branch?: string; model?: string; payment?: string; preset?: ExplorerPreset },
   enabled = true,

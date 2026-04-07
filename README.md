@@ -103,12 +103,13 @@ Use the company admin account created by `npm run bootstrap:supabase` or `npm ru
 - Alert evaluation now runs through the alerts queue and worker, with the scheduler enqueueing hourly evaluations and API-side rule changes enqueueing immediate company refreshes
 - Vehicle explorer CSV exports now run through the exports queue and worker, with completed files stored in the configured export bucket and surfaced in the in-app Exports page
 - Daily export subscriptions now fan out through the scheduler and exports worker, with saved explorer filters producing queued CSV jobs on the daily schedule
-- Admin users now have an Operations page that surfaces dependency health plus import/export attempts, failures, and queue progress metadata
+- Admin users now have an Operations page that surfaces dependency health, live queue snapshots, import/export attempts, failures, and key record counts
+- The API now exposes a Prometheus-style metrics endpoint at `/v1/metrics` plus an authenticated JSON summary at `/v1/metrics/summary`, with dependency health, queue depth, worker presence, and key Supabase-backed record counts
 
 ## Current Limitations
 
 - Some non-critical flows still use lightweight local fallbacks when Supabase is not configured for the environment
-- OIDC/SCIM, dbt execution, observability exporters, and true warehouse promotion are not finished in this pass
+- OIDC/SCIM, dbt execution, richer telemetry/export forwarding, and true warehouse promotion are not finished in this pass
 - The Supabase path is implemented and build-verified, but it still needs a live configured project to be exercised end to end
 
 ## Useful Commands
@@ -125,6 +126,7 @@ npm run test-server:links
 npm run test-server:supabase:migrate
 npm run smoke:import
 npm run smoke:publish-modes
+npm run smoke:runtime
 npm run generate:import-template
 npm run build:platform
 npm run test
