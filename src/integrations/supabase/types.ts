@@ -43,6 +43,8 @@ export type Database = {
       }
       import_batches: {
         Row: {
+          branch_id: string | null
+          company_id: string
           created_at: string
           duplicate_rows: number
           error_rows: number
@@ -56,6 +58,8 @@ export type Database = {
           valid_rows: number
         }
         Insert: {
+          branch_id?: string | null
+          company_id?: string
           created_at?: string
           duplicate_rows?: number
           error_rows?: number
@@ -69,6 +73,8 @@ export type Database = {
           valid_rows?: number
         }
         Update: {
+          branch_id?: string | null
+          company_id?: string
           created_at?: string
           duplicate_rows?: number
           error_rows?: number
@@ -85,6 +91,7 @@ export type Database = {
       }
       profiles: {
         Row: {
+          access_scope: string
           avatar_url: string | null
           branch_id: string | null
           company_id: string
@@ -96,6 +103,7 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          access_scope?: string
           avatar_url?: string | null
           branch_id?: string | null
           company_id?: string
@@ -107,6 +115,7 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          access_scope?: string
           avatar_url?: string | null
           branch_id?: string | null
           company_id?: string
@@ -122,6 +131,7 @@ export type Database = {
       quality_issues: {
         Row: {
           chassis_no: string
+          company_id: string
           created_at: string
           field: string
           id: string
@@ -132,6 +142,7 @@ export type Database = {
         }
         Insert: {
           chassis_no: string
+          company_id?: string
           created_at?: string
           field: string
           id?: string
@@ -142,6 +153,7 @@ export type Database = {
         }
         Update: {
           chassis_no?: string
+          company_id?: string
           created_at?: string
           field?: string
           id?: string
@@ -192,12 +204,15 @@ export type Database = {
       }
       vehicles: {
         Row: {
+          assigned_user_id: string | null
           bg_date: string | null
           bg_to_delivery: number | null
           bg_to_disb: number | null
           bg_to_shipment_etd: number | null
           branch_code: string
           chassis_no: string
+          company_branch_id: string | null
+          company_id: string
           contra_sola: string | null
           created_at: string
           customer_name: string
@@ -232,12 +247,15 @@ export type Database = {
           variant: string | null
         }
         Insert: {
+          assigned_user_id?: string | null
           bg_date?: string | null
           bg_to_delivery?: number | null
           bg_to_disb?: number | null
           bg_to_shipment_etd?: number | null
           branch_code?: string
           chassis_no: string
+          company_branch_id?: string | null
+          company_id?: string
           contra_sola?: string | null
           created_at?: string
           customer_name?: string
@@ -272,12 +290,15 @@ export type Database = {
           variant?: string | null
         }
         Update: {
+          assigned_user_id?: string | null
           bg_date?: string | null
           bg_to_delivery?: number | null
           bg_to_disb?: number | null
           bg_to_shipment_etd?: number | null
           branch_code?: string
           chassis_no?: string
+          company_branch_id?: string | null
+          company_id?: string
           contra_sola?: string | null
           created_at?: string
           customer_name?: string
@@ -318,7 +339,23 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      can_access_row: {
+        Args: {
+          row_assigned_user_id?: string
+          row_branch_code: string
+          row_company_id: string
+        }
+        Returns: boolean
+      }
+      get_my_access_scope: {
+        Args: never
+        Returns: {
+          user_access_scope: string
+          user_branch_id: string
+          user_company_id: string
+          user_role: string
+        }[]
+      }
     }
     Enums: {
       [_ in never]: never
