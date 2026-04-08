@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useCallback, useEffect } fr
 import { VehicleCanonical, ImportBatch, DataQualityIssue, SlaPolicy, KpiSummary } from '@/types';
 import { computeKpiSummaries } from '@/data/demo-data';
 import { supabase } from '@/integrations/supabase/client';
+import { useAuth } from '@/contexts/AuthContext';
 
 interface DataContextType {
   vehicles: VehicleCanonical[];
@@ -101,6 +102,7 @@ function mapDbSla(row: Record<string, unknown>): SlaPolicy {
 }
 
 export function DataProvider({ children }: { children: React.ReactNode }) {
+  const { user } = useAuth();
   const [vehicles, setVehiclesState] = useState<VehicleCanonical[]>([]);
   const [importBatches, setImportBatches] = useState<ImportBatch[]>([]);
   const [qualityIssues, setQualityIssues] = useState<DataQualityIssue[]>([]);
@@ -109,10 +111,12 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
   const [lastRefresh, setLastRefresh] = useState(new Date().toISOString());
   const [loading, setLoading] = useState(true);
 
+  const companyId = user?.company_id || 'c1';
+
   const reloadFromDb = useCallback(async () => {
     setLoading(true);
     try {
-      // Fetch all data in parallel
+      // RLS handles scope filtering — just fetch all accessible data
       const [vehiclesRes, batchesRes, issuesRes, slasRes] = await Promise.all([
         supabase.from('vehicles').select('*').order('created_at', { ascending: false }),
         supabase.from('import_batches').select('*').order('created_at', { ascending: false }),
@@ -141,7 +145,6 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => { reloadFromDb(); }, [reloadFromDb]);
 
   const setVehicles = useCallback(async (v: VehicleCanonical[]) => {
-    // Upsert vehicles to database
     const dbRows = v.map(vehicle => ({
       chassis_no: vehicle.chassis_no,
       bg_date: vehicle.bg_date || null,
@@ -160,7 +163,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       vaa_date: vehicle.vaa_date || null,
       full_payment_date: vehicle.full_payment_date || null,
       is_d2d: vehicle.is_d2d,
-      import_batch_id: null, // UUID reference — we'll handle batch linking separately
+      import_batch_id: null,
       source_row_id: vehicle.source_row_id,
       variant: vehicle.variant || null,
       dealer_transfer_price: vehicle.dealer_transfer_price || null,
@@ -178,9 +181,9 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       reg_to_delivery: vehicle.reg_to_delivery ?? null,
       bg_to_disb: vehicle.bg_to_disb ?? null,
       delivery_to_disb: vehicle.delivery_to_disb ?? null,
+      company_id: companyId,
     }));
 
-    // Batch upsert in chunks of 500
     for (let i = 0; i < dbRows.length; i += 500) {
       const chunk = dbRows.slice(i, i + 500);
       const { error } = await supabase
@@ -189,9 +192,8 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       if (error) console.error('Vehicle upsert error:', error);
     }
 
-    // Reload from DB to get server-generated IDs
     await reloadFromDb();
-  }, [reloadFromDb]);
+  }, [reloadFromDb, companyId]);
 
   const addImportBatch = useCallback(async (b: ImportBatch) => {
     const { error } = await supabase.from('import_batches').insert({
@@ -203,11 +205,11 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       valid_rows: b.validRows,
       error_rows: b.errorRows,
       duplicate_rows: b.duplicateRows,
+      company_id: companyId,
     } as any);
     if (error) console.error('Import batch insert error:', error);
-    // Optimistic update
     setImportBatches(prev => [b, ...prev]);
-  }, []);
+  }, [companyId]);
 
   const updateImportBatch = useCallback(async (id: string, updates: Partial<ImportBatch>) => {
     const dbUpdates: Record<string, unknown> = {};
@@ -229,7 +231,8 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       issue_type: i.issueType,
       message: i.message,
       severity: i.severity,
-      import_batch_id: null, // We don't have a valid UUID batch reference from the parser
+      import_batch_id: null,
+      company_id: companyId,
     }));
 
     for (let idx = 0; idx < dbIssues.length; idx += 500) {
@@ -237,7 +240,7 @@ export function DataProvider({ children }: { children: React.ReactNode }) {
       await supabase.from('quality_issues').insert(chunk as any);
     }
     setQualityIssues(prev => [...issues, ...prev]);
-  }, []);
+  }, [companyId]);
 
   const updateSla = useCallback(async (id: string, slaDays: number) => {
     await supabase.from('sla_policies').update({ sla_days: slaDays } as any).eq('id', id);

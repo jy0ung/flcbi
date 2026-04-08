@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
 import { User as SupabaseUser, Session } from '@supabase/supabase-js';
 import { supabase } from '@/integrations/supabase/client';
-import { AppRole } from '@/types';
+import { AppRole, AccessScope } from '@/types';
 
 interface Profile {
   id: string;
@@ -11,6 +11,7 @@ interface Profile {
   company_id: string;
   branch_id?: string | null;
   avatar_url?: string | null;
+  access_scope: AccessScope;
 }
 
 interface AuthContextType {

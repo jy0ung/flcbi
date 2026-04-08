@@ -9,7 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { toast } from 'sonner';
 import { Loader2, Save } from 'lucide-react';
 import { demoBranches } from '@/data/demo-data';
-import { AppRole } from '@/types';
+import { AppRole, AccessScope, ROLE_DEFAULT_SCOPE } from '@/types';
 
 const ROLES: { value: AppRole; label: string }[] = [
   { value: 'super_admin', label: 'Super Admin' },
@@ -37,15 +37,21 @@ export default function SettingsPage() {
     }
   }, [user]);
 
+  const handleRoleChange = (newRole: string) => {
+    setRole(newRole);
+  };
+
   const handleSave = async () => {
     if (!user) return;
     setSaving(true);
+    const newScope = ROLE_DEFAULT_SCOPE[role as AppRole] || 'company';
     const { error } = await supabase
       .from('profiles')
       .update({
         name,
         role,
         branch_id: branchId === 'none' ? null : branchId,
+        access_scope: newScope,
         updated_at: new Date().toISOString(),
       })
       .eq('id', user.id);
@@ -54,7 +60,6 @@ export default function SettingsPage() {
       toast.error('Failed to update profile: ' + error.message);
     } else {
       toast.success('Profile updated successfully');
-      // Refresh profile in auth context by reloading
       window.location.reload();
     }
     setSaving(false);
@@ -65,7 +70,6 @@ export default function SettingsPage() {
       <PageHeader title="Settings" description="Manage your profile and preferences" breadcrumbs={[{ label: 'FLC BI' }, { label: 'Settings' }]} />
 
       <div className="grid md:grid-cols-2 gap-6">
-        {/* Editable Profile */}
         <div className="glass-panel p-6 space-y-5">
           <h3 className="text-sm font-semibold text-foreground">Your Profile</h3>
 
@@ -82,7 +86,7 @@ export default function SettingsPage() {
 
             <div className="space-y-2">
               <Label htmlFor="role">Role</Label>
-              <Select value={role} onValueChange={setRole}>
+              <Select value={role} onValueChange={handleRoleChange}>
                 <SelectTrigger>
                   <SelectValue placeholder="Select role" />
                 </SelectTrigger>
@@ -109,6 +113,15 @@ export default function SettingsPage() {
               </Select>
             </div>
 
+            <div className="p-3 rounded-lg bg-secondary/50 text-xs space-y-1">
+              <p className="font-medium text-foreground">Your Access Level</p>
+              <p className="text-muted-foreground">
+                Scope: <strong className="text-foreground capitalize">{ROLE_DEFAULT_SCOPE[role as AppRole] || 'company'}</strong>
+                {' • '}Role: <strong className="text-foreground capitalize">{role.replace(/_/g, ' ')}</strong>
+                {branchId !== 'none' && <> • Branch: <strong className="text-foreground">{branchId}</strong></>}
+              </p>
+            </div>
+
             <Button onClick={handleSave} disabled={saving} className="w-full">
               {saving ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Save className="h-4 w-4 mr-2" />}
               Save Changes
@@ -116,12 +129,12 @@ export default function SettingsPage() {
           </div>
         </div>
 
-        {/* Company Info (read-only) */}
         <div className="glass-panel p-6 space-y-5">
           <h3 className="text-sm font-semibold text-foreground">Company Information</h3>
           <div className="space-y-3 text-sm">
             <div><p className="text-xs text-muted-foreground">Company</p><p className="text-foreground font-medium">FLC Auto Group</p></div>
             <div><p className="text-xs text-muted-foreground">Company Code</p><p className="text-foreground font-medium">FLC</p></div>
+            <div><p className="text-xs text-muted-foreground">Company ID</p><p className="text-foreground font-medium">{user?.company_id || 'c1'}</p></div>
             <div><p className="text-xs text-muted-foreground">Platform</p><p className="text-foreground font-medium">FLC BI v1.0</p></div>
           </div>
         </div>
