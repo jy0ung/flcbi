@@ -9,7 +9,7 @@ const branches = ['KK', 'TWU', 'SDK', 'LDU', 'BTU', 'MYY', 'SBW'];
 export const demoBranches: Branch[] = branches.map((b, i) => ({ id: `br-${i}`, name: b, code: b, companyId: 'c1' }));
 
 export const demoUser: User = {
-  id: 'u1', email: 'director@flc.com', name: 'Sarah Chen', role: 'director', companyId: 'c1',
+  id: 'u1', email: 'director@flc.com', name: 'Sarah Chen', role: 'director', companyId: 'c1', accessScope: 'company',
 };
 
 export const demoImportBatches: ImportBatch[] = [];
