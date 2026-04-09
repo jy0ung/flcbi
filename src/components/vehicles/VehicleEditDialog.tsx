@@ -61,7 +61,7 @@ export function VehicleEditDialog({ vehicle, open, onOpenChange, onSaved }: Vehi
 
       const { error } = await supabase
         .from('vehicles')
-        .update(updates)
+        .update(updates as never)
         .eq('id', vehicle.id);
 
       if (error) throw error;
