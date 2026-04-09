@@ -4,10 +4,21 @@ import { PageHeader } from '@/components/shared/PageHeader';
 import { StatusBadge } from '@/components/shared/StatusBadge';
 import { useData } from '@/contexts/DataContext';
 import { Button } from '@/components/ui/button';
-import { Download, Search } from 'lucide-react';
+import { Download, Search, Pencil, ChevronLeft, ChevronRight } from 'lucide-react';
+import { VehicleEditDialog } from '@/components/vehicles/VehicleEditDialog';
+import { VehicleCanonical } from '@/types';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+
+const PAGE_SIZE_OPTIONS = [25, 50, 100, 250];
 
 export default function VehicleExplorer() {
-  const { vehicles } = useData();
+  const { vehicles, reloadFromDb } = useData();
   const navigate = useNavigate();
   const [search, setSearch] = useState('');
   const [branchFilter, setBranchFilter] = useState('all');
@@ -15,6 +26,9 @@ export default function VehicleExplorer() {
   const [paymentFilter, setPaymentFilter] = useState('all');
   const [sortField, setSortField] = useState<string>('bg_to_delivery');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(50);
+  const [editVehicle, setEditVehicle] = useState<VehicleCanonical | null>(null);
 
   const branches = [...new Set(vehicles.map(v => v.branch_code))].sort();
   const models = [...new Set(vehicles.map(v => v.model))].sort();
@@ -31,6 +45,14 @@ export default function VehicleExplorer() {
     const bVal = (b as unknown as Record<string, unknown>)[sortField] as number ?? 0;
     return sortDir === 'desc' ? bVal - aVal : aVal - bVal;
   });
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const currentPage = Math.min(page, totalPages);
+  const startIdx = (currentPage - 1) * pageSize;
+  const pageData = filtered.slice(startIdx, startIdx + pageSize);
+
+  // Reset page when filters change
+  React.useEffect(() => { setPage(1); }, [search, branchFilter, modelFilter, paymentFilter, pageSize]);
 
   const toggleSort = (field: string) => {
     if (sortField === field) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
@@ -52,6 +74,22 @@ export default function VehicleExplorer() {
     { field: 'bg_to_disb', label: 'BG→Disb' },
     { field: 'delivery_to_disb', label: 'Del→Disb' },
   ] as const;
+
+  const getPageNumbers = () => {
+    const pages: (number | 'ellipsis')[] = [];
+    if (totalPages <= 7) {
+      for (let i = 1; i <= totalPages; i++) pages.push(i);
+    } else {
+      pages.push(1);
+      if (currentPage > 3) pages.push('ellipsis');
+      for (let i = Math.max(2, currentPage - 1); i <= Math.min(totalPages - 1, currentPage + 1); i++) {
+        pages.push(i);
+      }
+      if (currentPage < totalPages - 2) pages.push('ellipsis');
+      pages.push(totalPages);
+    }
+    return pages;
+  };
 
   return (
     <div className="space-y-4 animate-fade-in">
@@ -79,6 +117,19 @@ export default function VehicleExplorer() {
           <option value="all">All Payments</option>
           {payments.map(p => <option key={p} value={p}>{p}</option>)}
         </select>
+        <div className="ml-auto flex items-center gap-2">
+          <span className="text-xs text-muted-foreground">Rows per page:</span>
+          <Select value={String(pageSize)} onValueChange={v => setPageSize(Number(v))}>
+            <SelectTrigger className="h-8 w-20 text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {PAGE_SIZE_OPTIONS.map(s => (
+                <SelectItem key={s} value={String(s)}>{s}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
       </div>
 
       <div className="glass-panel overflow-hidden">
@@ -86,6 +137,7 @@ export default function VehicleExplorer() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border bg-secondary/30 text-left">
+                <th className="px-3 py-2 text-xs text-muted-foreground font-medium w-8"></th>
                 <th className="px-3 py-2 text-xs text-muted-foreground font-medium">Chassis No.</th>
                 <th className="px-3 py-2 text-xs text-muted-foreground font-medium">Branch</th>
                 <th className="px-3 py-2 text-xs text-muted-foreground font-medium">Model</th>
@@ -95,8 +147,21 @@ export default function VehicleExplorer() {
               </tr>
             </thead>
             <tbody>
-              {filtered.slice(0, 100).map(v => (
+              {pageData.map(v => (
                 <tr key={v.id} className="data-table-row cursor-pointer" onClick={() => navigate(`/auto-aging/vehicles/${v.chassis_no}`)}>
+                  <td className="px-3 py-2">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-6 w-6"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setEditVehicle(v);
+                      }}
+                    >
+                      <Pencil className="h-3 w-3 text-muted-foreground hover:text-foreground" />
+                    </Button>
+                  </td>
                   <td className="px-3 py-2 font-mono text-xs text-primary">{v.chassis_no}</td>
                   <td className="px-3 py-2 text-foreground">{v.branch_code}</td>
                   <td className="px-3 py-2 text-foreground">{v.model}</td>
@@ -115,8 +180,56 @@ export default function VehicleExplorer() {
             </tbody>
           </table>
         </div>
-        {filtered.length > 100 && <p className="text-xs text-muted-foreground text-center py-3">Showing 100 of {filtered.length} results</p>}
+
+        {/* Pagination controls */}
+        <div className="flex items-center justify-between border-t border-border px-4 py-3">
+          <p className="text-xs text-muted-foreground">
+            Showing {filtered.length === 0 ? 0 : startIdx + 1}–{Math.min(startIdx + pageSize, filtered.length)} of {filtered.length} results
+          </p>
+          <div className="flex items-center gap-1">
+            <Button
+              variant="outline"
+              size="icon"
+              className="h-7 w-7"
+              disabled={currentPage <= 1}
+              onClick={() => setPage(p => p - 1)}
+            >
+              <ChevronLeft className="h-3.5 w-3.5" />
+            </Button>
+            {getPageNumbers().map((p, i) =>
+              p === 'ellipsis' ? (
+                <span key={`e-${i}`} className="px-1 text-xs text-muted-foreground">…</span>
+              ) : (
+                <Button
+                  key={p}
+                  variant={p === currentPage ? 'default' : 'outline'}
+                  size="icon"
+                  className="h-7 w-7 text-xs"
+                  onClick={() => setPage(p)}
+                >
+                  {p}
+                </Button>
+              )
+            )}
+            <Button
+              variant="outline"
+              size="icon"
+              className="h-7 w-7"
+              disabled={currentPage >= totalPages}
+              onClick={() => setPage(p => p + 1)}
+            >
+              <ChevronRight className="h-3.5 w-3.5" />
+            </Button>
+          </div>
+        </div>
       </div>
+
+      <VehicleEditDialog
+        vehicle={editVehicle}
+        open={!!editVehicle}
+        onOpenChange={(open) => { if (!open) setEditVehicle(null); }}
+        onSaved={() => reloadFromDb()}
+      />
     </div>
   );
 }
