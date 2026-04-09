@@ -1,16 +1,18 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { PageHeader } from '@/components/shared/PageHeader';
 import { StatusBadge } from '@/components/shared/StatusBadge';
 import { useData } from '@/contexts/DataContext';
 import { Button } from '@/components/ui/button';
-import { ArrowLeft, CheckCircle, Clock, AlertTriangle } from 'lucide-react';
+import { ArrowLeft, CheckCircle, Clock, AlertTriangle, Pencil } from 'lucide-react';
 import { KPI_DEFINITIONS } from '@/data/kpi-definitions';
+import { VehicleEditDialog } from '@/components/vehicles/VehicleEditDialog';
 
 export default function VehicleDetail() {
   const { chassisNo } = useParams<{ chassisNo: string }>();
-  const { vehicles, qualityIssues } = useData();
+  const { vehicles, qualityIssues, reloadFromDb } = useData();
   const navigate = useNavigate();
+  const [editOpen, setEditOpen] = useState(false);
 
   const vehicle = vehicles.find(v => v.chassis_no === chassisNo);
   if (!vehicle) {
@@ -45,7 +47,16 @@ export default function VehicleDetail() {
         title={vehicle.chassis_no}
         description={`${vehicle.model} • ${vehicle.branch_code} • ${vehicle.customer_name}`}
         breadcrumbs={[{ label: 'FLC BI' }, { label: 'Auto Aging' }, { label: 'Vehicles' }, { label: vehicle.chassis_no }]}
-        actions={<Button variant="outline" size="sm" onClick={() => navigate(-1)}><ArrowLeft className="h-3.5 w-3.5 mr-1" />Back</Button>}
+        actions={
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" onClick={() => setEditOpen(true)}>
+              <Pencil className="h-3.5 w-3.5 mr-1" />Edit
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => navigate(-1)}>
+              <ArrowLeft className="h-3.5 w-3.5 mr-1" />Back
+            </Button>
+          </div>
+        }
       />
 
       <div className="grid md:grid-cols-2 gap-4">
@@ -125,6 +136,12 @@ export default function VehicleDetail() {
           </div>
         </div>
       )}
+      <VehicleEditDialog
+        vehicle={vehicle}
+        open={editOpen}
+        onOpenChange={setEditOpen}
+        onSaved={() => reloadFromDb()}
+      />
     </div>
   );
 }

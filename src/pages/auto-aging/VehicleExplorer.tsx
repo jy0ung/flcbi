@@ -4,9 +4,7 @@ import { PageHeader } from '@/components/shared/PageHeader';
 import { StatusBadge } from '@/components/shared/StatusBadge';
 import { useData } from '@/contexts/DataContext';
 import { Button } from '@/components/ui/button';
-import { Download, Search, Pencil, ChevronLeft, ChevronRight } from 'lucide-react';
-import { VehicleEditDialog } from '@/components/vehicles/VehicleEditDialog';
-import { VehicleCanonical } from '@/types';
+import { Download, Search, ChevronLeft, ChevronRight } from 'lucide-react';
 import {
   Select,
   SelectContent,
@@ -28,7 +26,7 @@ export default function VehicleExplorer() {
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(50);
-  const [editVehicle, setEditVehicle] = useState<VehicleCanonical | null>(null);
+  
 
   const branches = [...new Set(vehicles.map(v => v.branch_code))].sort();
   const models = [...new Set(vehicles.map(v => v.model))].sort();
@@ -137,7 +135,6 @@ export default function VehicleExplorer() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border bg-secondary/30 text-left">
-                <th className="px-3 py-2 text-xs text-muted-foreground font-medium w-8"></th>
                 <th className="px-3 py-2 text-xs text-muted-foreground font-medium">Chassis No.</th>
                 <th className="px-3 py-2 text-xs text-muted-foreground font-medium">Branch</th>
                 <th className="px-3 py-2 text-xs text-muted-foreground font-medium">Model</th>
@@ -149,19 +146,6 @@ export default function VehicleExplorer() {
             <tbody>
               {pageData.map(v => (
                 <tr key={v.id} className="data-table-row cursor-pointer" onClick={() => navigate(`/auto-aging/vehicles/${v.chassis_no}`)}>
-                  <td className="px-3 py-2">
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-6 w-6"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setEditVehicle(v);
-                      }}
-                    >
-                      <Pencil className="h-3 w-3 text-muted-foreground hover:text-foreground" />
-                    </Button>
-                  </td>
                   <td className="px-3 py-2 font-mono text-xs text-primary">{v.chassis_no}</td>
                   <td className="px-3 py-2 text-foreground">{v.branch_code}</td>
                   <td className="px-3 py-2 text-foreground">{v.model}</td>
@@ -224,12 +208,6 @@ export default function VehicleExplorer() {
         </div>
       </div>
 
-      <VehicleEditDialog
-        vehicle={editVehicle}
-        open={!!editVehicle}
-        onOpenChange={(open) => { if (!open) setEditVehicle(null); }}
-        onSaved={() => reloadFromDb()}
-      />
     </div>
   );
 }

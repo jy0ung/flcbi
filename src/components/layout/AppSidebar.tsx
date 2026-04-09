@@ -52,7 +52,7 @@ export function AppSidebar({ collapsed, setCollapsed }: AppSidebarProps) {
 
   return (
     <aside className={cn(
-      "h-screen flex flex-col bg-sidebar border-r border-sidebar-border transition-all duration-300 flex-shrink-0",
+      "h-screen flex flex-col bg-sidebar border-r border-sidebar-border transition-all duration-300 flex-shrink-0 sticky top-0",
       collapsed ? "w-16" : "w-64"
     )}>
       {/* Logo */}
