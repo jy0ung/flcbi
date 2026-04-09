@@ -26,7 +26,7 @@ export default function VehicleExplorer() {
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(50);
-  const [editVehicle, setEditVehicle] = useState<VehicleCanonical | null>(null);
+  
 
   const branches = [...new Set(vehicles.map(v => v.branch_code))].sort();
   const models = [...new Set(vehicles.map(v => v.model))].sort();
