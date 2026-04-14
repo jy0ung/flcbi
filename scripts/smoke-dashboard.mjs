@@ -246,6 +246,35 @@ try {
   assert(autoAgingExplorerUrl.searchParams.get("branch") === autoAgingBranchChoice, "Auto-aging branch filter not carried into explorer");
   assert(autoAgingExplorerUrl.searchParams.get("model") === autoAgingModelChoice, "Auto-aging model filter not carried into explorer");
 
+  console.log("step: quality-issues");
+  await page.goto("/auto-aging/quality", { waitUntil: "domcontentloaded" });
+  await page.getByRole("heading", { name: "Data Quality" }).waitFor({ timeout: 15000 });
+  await page.getByTestId("quality-issues-table").waitFor({ timeout: 15000 });
+
+  const qualityRows = page.getByTestId("quality-issue-row");
+  const qualityRowCount = await qualityRows.count();
+  if (qualityRowCount > 0) {
+    const typeSelect = page.getByTestId("quality-filter-type");
+    const typeOptions = await typeSelect.locator("option").allTextContents();
+    const filterType = typeOptions.find((value) => value !== "All Types");
+    if (filterType) {
+      await typeSelect.selectOption({ label: filterType });
+      await page.waitForTimeout(500);
+      const filteredRowCount = await qualityRows.count();
+      assert(filteredRowCount <= qualityRowCount, "Quality type filter did not narrow the table");
+      await page.getByTestId("quality-filter-clear").click();
+      await page.waitForTimeout(500);
+      const resetRowCount = await qualityRows.count();
+      assert(resetRowCount === qualityRowCount, "Quality filters did not reset cleanly");
+    }
+
+    await qualityRows.first().click();
+    await page.waitForURL("**/auto-aging/vehicles/**", { timeout: 15000 });
+    await page.getByText("Vehicle Information").waitFor({ timeout: 15000 });
+  } else {
+    await page.getByText("No data quality issues detected yet.").waitFor({ timeout: 15000 });
+  }
+
   console.log("step: import-history");
   await page.goto("/auto-aging/history", { waitUntil: "domcontentloaded" });
   await page.getByRole("heading", { name: "Import History" }).waitFor({ timeout: 15000 });
@@ -293,6 +322,7 @@ try {
     dashboardUrl: dashboardUrl.toString(),
     explorerUrl: explorerUrl.toString(),
     autoAgingExplorerUrl: autoAgingExplorerUrl.toString(),
+    qualityRowCount,
     importHistoryRows: await importHistoryRows.count(),
     notificationsRendered: totalNotifications,
     exportsRendered: renderedExports,
