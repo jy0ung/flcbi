@@ -2,17 +2,18 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
   CreateAlertRequest,
   CreateExplorerExportRequest,
+  CreateExplorerSavedViewRequest,
   CreateExportSubscriptionRequest,
   ExecutiveDashboardMetricId,
   ExportJob,
   ExplorerPreset,
   ExplorerQueryRequest,
-    ImportBatch,
-    ImportDetailResponse,
-    NotificationsResponse,
-    UpdateVehicleCorrectionsRequest,
-    UpdateAlertRequest,
-  } from "@flcbi/contracts";
+  ImportBatch,
+  ImportDetailResponse,
+  NotificationsResponse,
+  UpdateAlertRequest,
+  UpdateVehicleCorrectionsRequest,
+} from "@flcbi/contracts";
 import { apiClient } from "@/lib/api-client";
 
 function isImportPending(status?: ImportBatch["status"]) {
@@ -85,6 +86,34 @@ export function useExplorer(query: ExplorerQueryRequest, enabled = true) {
     queryFn: () => apiClient.queryExplorer(query),
     enabled,
     placeholderData: (previousData) => previousData,
+  });
+}
+
+export function useExplorerSavedViews(enabled = true) {
+  return useQuery({
+    queryKey: ["aging", "saved-views"],
+    queryFn: () => apiClient.getExplorerSavedViews(),
+    enabled,
+  });
+}
+
+export function useCreateExplorerSavedView() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: CreateExplorerSavedViewRequest) => apiClient.createExplorerSavedView(input),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["aging", "saved-views"] });
+    },
+  });
+}
+
+export function useDeleteExplorerSavedView() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => apiClient.deleteExplorerSavedView(id),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["aging", "saved-views"] });
+    },
   });
 }
 

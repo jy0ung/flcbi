@@ -29,6 +29,7 @@ import {
   type DataQualityIssue,
   type ExplorerQuery,
   type ExplorerPreset,
+  type ExplorerSavedView,
   type ExplorerResult,
   type ImportBatch,
   type ImportPublishMode,
@@ -86,6 +87,7 @@ export class PlatformStoreService implements PlatformRepository {
   private readonly audits: AuditEvent[] = [];
   private readonly slasByCompany = new Map<string, SlaPolicy[]>();
   private readonly dashboardPreferencesByUser = new Map<string, DashboardPreferences>();
+  private readonly explorerSavedViewsByUser = new Map<string, ExplorerSavedView[]>();
   private readonly importPreviews = new Map<string, ImportPreview>();
   private readonly exports = new Map<string, ExportRecord>();
   private readonly exportSubscriptions = new Map<string, ExportSubscriptionRecord>();
@@ -608,6 +610,74 @@ export class PlatformStoreService implements PlatformRepository {
     return normalized;
   }
 
+  listExplorerSavedViews(user: User) {
+    return [...(this.explorerSavedViewsByUser.get(user.id) ?? [])]
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+  }
+
+  createExplorerSavedView(user: User, input: { name: string; query: ExplorerQuery }) {
+    const normalizedName = input.name.trim();
+    if (!normalizedName) {
+      throw new BadRequestException("Saved view name is required");
+    }
+
+    const normalizedQuery = normalizeExplorerSavedViewQuery(input.query);
+    const views = [...(this.explorerSavedViewsByUser.get(user.id) ?? [])];
+    const existing = views.find((view) => view.name.toLowerCase() === normalizedName.toLowerCase());
+    const timestamp = new Date().toISOString();
+
+    const savedView: ExplorerSavedView = existing
+      ? {
+          ...existing,
+          name: normalizedName,
+          query: normalizedQuery,
+          updatedAt: timestamp,
+        }
+      : {
+          id: randomUUID(),
+          name: normalizedName,
+          query: normalizedQuery,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        };
+
+    const nextViews = existing
+      ? views.map((view) => (view.id === existing.id ? savedView : view))
+      : [savedView, ...views];
+
+    this.explorerSavedViewsByUser.set(user.id, nextViews);
+    this.addAuditEvent({
+      action: existing ? "saved_view_updated" : "saved_view_created",
+      entity: "saved_view",
+      entityId: savedView.id,
+      userId: user.id,
+      userName: user.name,
+      details: `${existing ? "Updated" : "Saved"} explorer view ${savedView.name}`,
+    });
+    return savedView;
+  }
+
+  deleteExplorerSavedView(user: User, savedViewId: string) {
+    const views = this.explorerSavedViewsByUser.get(user.id) ?? [];
+    const existing = views.find((view) => view.id === savedViewId);
+    if (!existing) {
+      throw new NotFoundException(`Saved view ${savedViewId} not found`);
+    }
+
+    this.explorerSavedViewsByUser.set(
+      user.id,
+      views.filter((view) => view.id !== savedViewId),
+    );
+    this.addAuditEvent({
+      action: "saved_view_deleted",
+      entity: "saved_view",
+      entityId: savedViewId,
+      userId: user.id,
+      userName: user.name,
+      details: `Deleted explorer view ${existing.name}`,
+    });
+  }
+
   listSlas(user: User) {
     return [...this.getCompanySlas(user.companyId)];
   }
@@ -935,6 +1005,20 @@ function canViewCompanyWideExports(user: User) {
 
 function canManageVehicleCorrections(user: User) {
   return ["super_admin", "company_admin", "director"].includes(user.role);
+}
+
+function normalizeExplorerSavedViewQuery(query: ExplorerQuery): ExplorerQuery {
+  return {
+    search: query.search?.trim() || undefined,
+    branch: query.branch ?? "all",
+    model: query.model ?? "all",
+    payment: query.payment ?? "all",
+    preset: query.preset,
+    page: 1,
+    pageSize: query.pageSize ? Math.min(Math.max(query.pageSize, 1), 100) : 50,
+    sortField: query.sortField ?? "bg_to_delivery",
+    sortDirection: query.sortDirection ?? "desc",
+  };
 }
 
 function buildVehicleCorrectionKey(companyId: string, chassisNo: string, field: VehicleCorrectionField) {

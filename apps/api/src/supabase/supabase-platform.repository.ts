@@ -36,6 +36,7 @@ import {
   type DataQualityIssue,
   type ExplorerQuery,
   type ExplorerPreset,
+  type ExplorerSavedView,
   type ExplorerResult,
   type ImportBatch,
   type ImportPublishMode,
@@ -260,6 +261,17 @@ interface RawImportRow {
 interface SavedViewRow {
   id: string;
   definition: { executiveMetricIds?: string[] } | null;
+}
+
+interface ExplorerSavedViewRow {
+  id: string;
+  company_id: string;
+  created_by: string | null;
+  module: string;
+  name: string;
+  definition: { query?: ExplorerQuery } | null;
+  created_at: string;
+  updated_at: string;
 }
 
 interface BranchRow {
@@ -1386,6 +1398,123 @@ export class SupabasePlatformRepository implements PlatformRepository {
     return normalized;
   }
 
+  async listExplorerSavedViews(user: User): Promise<ExplorerSavedView[]> {
+    if (!this.supabase.isConfigured()) {
+      return this.fallback.listExplorerSavedViews(user);
+    }
+
+    const rows = await this.fetchExplorerSavedViewRows(user);
+    return rows.map((row) => this.mapExplorerSavedViewRow(row));
+  }
+
+  async createExplorerSavedView(
+    user: User,
+    input: { name: string; query: ExplorerQuery },
+  ): Promise<ExplorerSavedView> {
+    if (!this.supabase.isConfigured()) {
+      return this.fallback.createExplorerSavedView(user, input);
+    }
+
+    const companyId = this.requireCompanyId(user);
+    const dbUserId = await this.resolveDbUserIdFromUser(user);
+    if (!dbUserId) {
+      throw new InternalServerErrorException("Could not resolve the current user");
+    }
+
+    const normalizedName = input.name.trim();
+    if (!normalizedName) {
+      throw new BadRequestException("Saved view name is required");
+    }
+
+    const normalizedQuery = normalizeExplorerSavedViewQuery(input.query);
+    const client = this.supabase.getAdminClient();
+    const existing = await this.fetchExplorerSavedViewRowByName(user, normalizedName);
+    const payload = {
+      company_id: companyId,
+      created_by: dbUserId,
+      module: "vehicle_explorer",
+      name: normalizedName,
+      definition: { query: normalizedQuery },
+    };
+
+    let row: ExplorerSavedViewRow | null = null;
+    if (existing) {
+      const { data, error } = await client
+        .schema("app")
+        .from("saved_views")
+        .update(payload)
+        .eq("id", existing.id)
+        .select("id, company_id, created_by, module, name, definition, created_at, updated_at")
+        .single();
+
+      if (error || !data) {
+        throw new InternalServerErrorException(error?.message ?? "Failed to save explorer view");
+      }
+      row = data as ExplorerSavedViewRow;
+    } else {
+      const { data, error } = await client
+        .schema("app")
+        .from("saved_views")
+        .insert(payload)
+        .select("id, company_id, created_by, module, name, definition, created_at, updated_at")
+        .single();
+
+      if (error || !data) {
+        throw new InternalServerErrorException(error?.message ?? "Failed to save explorer view");
+      }
+      row = data as ExplorerSavedViewRow;
+    }
+
+    const savedView = this.mapExplorerSavedViewRow(row);
+    await this.runBestEffort(`saved_view_save_audit:${savedView.id}`, async () => {
+      await this.addAuditEvent({
+        action: existing ? "saved_view_updated" : "saved_view_created",
+        entity: "saved_view",
+        entityId: savedView.id,
+        userId: user.id,
+        userName: user.name,
+        details: `${existing ? "Updated" : "Saved"} explorer view ${savedView.name}`,
+      });
+    });
+
+    return savedView;
+  }
+
+  async deleteExplorerSavedView(user: User, savedViewId: string): Promise<void> {
+    if (!this.supabase.isConfigured()) {
+      return this.fallback.deleteExplorerSavedView(user, savedViewId);
+    }
+
+    const companyId = this.requireCompanyId(user);
+    const existing = await this.fetchExplorerSavedViewRowForUser(user, savedViewId);
+    if (!existing) {
+      throw new NotFoundException(`Saved view ${savedViewId} not found`);
+    }
+
+    const client = this.supabase.getAdminClient();
+    const { error } = await client
+      .schema("app")
+      .from("saved_views")
+      .delete()
+      .eq("company_id", companyId)
+      .eq("id", savedViewId);
+
+    if (error) {
+      throw new InternalServerErrorException(error.message);
+    }
+
+    await this.runBestEffort(`saved_view_delete_audit:${savedViewId}`, async () => {
+      await this.addAuditEvent({
+        action: "saved_view_deleted",
+        entity: "saved_view",
+        entityId: savedViewId,
+        userId: user.id,
+        userName: user.name,
+        details: `Deleted explorer view ${existing.name}`,
+      });
+    });
+  }
+
   async listSlas(user: User): Promise<SlaPolicy[]> {
     if (!this.supabase.isConfigured()) {
       return this.fallback.listSlas(user);
@@ -2449,6 +2578,81 @@ export class SupabasePlatformRepository implements PlatformRepository {
     return (data as SavedViewRow | null) ?? null;
   }
 
+  private async fetchExplorerSavedViewRows(user: User) {
+    const companyId = this.requireCompanyId(user);
+    const dbUserId = await this.resolveDbUserIdFromUser(user);
+    if (!dbUserId) {
+      return [];
+    }
+
+    const client = this.supabase.getAdminClient();
+    const { data, error } = await client
+      .schema("app")
+      .from("saved_views")
+      .select("id, company_id, created_by, module, name, definition, created_at, updated_at")
+      .eq("company_id", companyId)
+      .eq("created_by", dbUserId)
+      .eq("module", "vehicle_explorer")
+      .order("updated_at", { ascending: false })
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      throw new InternalServerErrorException(error.message);
+    }
+
+    return (data ?? []) as ExplorerSavedViewRow[];
+  }
+
+  private async fetchExplorerSavedViewRowForUser(user: User, savedViewId: string) {
+    const companyId = this.requireCompanyId(user);
+    const dbUserId = await this.resolveDbUserIdFromUser(user);
+    if (!dbUserId) {
+      return null;
+    }
+
+    const client = this.supabase.getAdminClient();
+    const { data, error } = await client
+      .schema("app")
+      .from("saved_views")
+      .select("id, company_id, created_by, module, name, definition, created_at, updated_at")
+      .eq("company_id", companyId)
+      .eq("created_by", dbUserId)
+      .eq("module", "vehicle_explorer")
+      .eq("id", savedViewId)
+      .maybeSingle();
+
+    if (error) {
+      throw new InternalServerErrorException(error.message);
+    }
+
+    return (data as ExplorerSavedViewRow | null) ?? null;
+  }
+
+  private async fetchExplorerSavedViewRowByName(user: User, name: string) {
+    const companyId = this.requireCompanyId(user);
+    const dbUserId = await this.resolveDbUserIdFromUser(user);
+    if (!dbUserId) {
+      return null;
+    }
+
+    const client = this.supabase.getAdminClient();
+    const { data, error } = await client
+      .schema("app")
+      .from("saved_views")
+      .select("id, company_id, created_by, module, name, definition, created_at, updated_at")
+      .eq("company_id", companyId)
+      .eq("created_by", dbUserId)
+      .eq("module", "vehicle_explorer")
+      .eq("name", name)
+      .maybeSingle();
+
+    if (error) {
+      throw new InternalServerErrorException(error.message);
+    }
+
+    return (data as ExplorerSavedViewRow | null) ?? null;
+  }
+
   private async fetchNotificationRows(user: User): Promise<NotificationRow[]> {
     const companyId = this.requireCompanyId(user);
     const dbUserId = await this.resolveDbUserIdFromUser(user);
@@ -2470,6 +2674,16 @@ export class SupabasePlatformRepository implements PlatformRepository {
     }
 
     return (data ?? []) as NotificationRow[];
+  }
+
+  private mapExplorerSavedViewRow(row: ExplorerSavedViewRow): ExplorerSavedView {
+    return {
+      id: row.id,
+      name: row.name,
+      query: normalizeExplorerSavedViewQuery((row.definition?.query ?? defaultExplorerSavedViewQuery()) as ExplorerQuery),
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    };
   }
 
   private mapNotificationRow(row: NotificationRow): Notification {
@@ -3241,6 +3455,18 @@ function defaultExportQuery(): ExplorerQuery {
   };
 }
 
+function defaultExplorerSavedViewQuery(): ExplorerQuery {
+  return {
+    branch: "all",
+    model: "all",
+    payment: "all",
+    page: 1,
+    pageSize: 50,
+    sortField: "bg_to_delivery",
+    sortDirection: "desc",
+  };
+}
+
 function normalizeExportQuery(query: ExplorerQuery): ExplorerQuery {
   return {
     search: query.search?.trim() || undefined,
@@ -3250,6 +3476,20 @@ function normalizeExportQuery(query: ExplorerQuery): ExplorerQuery {
     preset: query.preset,
     page: 1,
     pageSize: 100,
+    sortField: query.sortField ?? "bg_to_delivery",
+    sortDirection: query.sortDirection ?? "desc",
+  };
+}
+
+function normalizeExplorerSavedViewQuery(query: ExplorerQuery): ExplorerQuery {
+  return {
+    search: query.search?.trim() || undefined,
+    branch: query.branch ?? "all",
+    model: query.model ?? "all",
+    payment: query.payment ?? "all",
+    preset: query.preset,
+    page: 1,
+    pageSize: query.pageSize ? Math.min(Math.max(query.pageSize, 1), 100) : 50,
     sortField: query.sortField ?? "bg_to_delivery",
     sortDirection: query.sortDirection ?? "desc",
   };

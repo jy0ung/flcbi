@@ -396,6 +396,14 @@ export interface DashboardPreferences {
   executiveMetricIds: ExecutiveDashboardMetricId[];
 }
 
+export interface ExplorerSavedView {
+  id: string;
+  name: string;
+  query: ExplorerQuery;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface AgingSummary {
   totalVehicles: number;
   totalOverdue: number;

@@ -16,7 +16,10 @@ import type {
   ExecutiveDashboardMetricId,
   ExplorerQueryRequest,
   ExplorerQueryResponse,
+  ExplorerSavedViewsResponse,
   ExportsResponse,
+  CreateExplorerSavedViewRequest,
+  CreateExplorerSavedViewResponse,
   ExportSubscriptionsResponse,
   ImportDetailResponse,
   ImportsResponse,
@@ -176,6 +179,20 @@ export const apiClient = {
     return request<ExplorerQueryResponse>("/aging/explorer/query", {
       method: "POST",
       body: JSON.stringify(input),
+    });
+  },
+  getExplorerSavedViews() {
+    return request<ExplorerSavedViewsResponse>("/saved-views/explorer");
+  },
+  createExplorerSavedView(input: CreateExplorerSavedViewRequest) {
+    return request<CreateExplorerSavedViewResponse>("/saved-views/explorer", {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+  },
+  deleteExplorerSavedView(id: string) {
+    return request<SuccessResponse>(`/saved-views/explorer/${encodeURIComponent(id)}`, {
+      method: "DELETE",
     });
   },
   getVehicle(chassisNo: string) {

@@ -246,6 +246,35 @@ try {
   assert(autoAgingExplorerUrl.searchParams.get("branch") === autoAgingBranchChoice, "Auto-aging branch filter not carried into explorer");
   assert(autoAgingExplorerUrl.searchParams.get("model") === autoAgingModelChoice, "Auto-aging model filter not carried into explorer");
 
+  console.log("step: saved-view");
+  const savedViewName = `Smoke Saved View ${Date.now()}`;
+  await page.getByTestId("explorer-save-view-button").click();
+  await page.getByTestId("explorer-save-view-name").fill(savedViewName);
+  await page.getByTestId("explorer-save-view-submit").click();
+  const savedViewRow = page.getByTestId("explorer-saved-view-row").filter({ hasText: savedViewName }).first();
+  await savedViewRow.waitFor({ timeout: 15000 });
+
+  const explorerModelSelect = page.locator("select").nth(2);
+  await explorerModelSelect.selectOption({ label: "All Models" });
+  await page.waitForTimeout(1000);
+  const modelResetUrl = new URL(page.url());
+  assert(modelResetUrl.searchParams.get("model") === null, "Model filter did not reset before applying saved view");
+
+  await savedViewRow.click();
+  await page.waitForURL((url) => (
+    url.searchParams.get("branch") === autoAgingBranchChoice &&
+    url.searchParams.get("model") === autoAgingModelChoice
+  ), { timeout: 15000 });
+
+  const savedViewUrl = new URL(page.url());
+  assert(savedViewUrl.searchParams.get("branch") === autoAgingBranchChoice, "Saved view did not restore branch");
+  assert(savedViewUrl.searchParams.get("model") === autoAgingModelChoice, "Saved view did not restore model");
+
+  await savedViewRow.getByTestId("explorer-saved-view-delete").click();
+  await page.getByTestId("explorer-saved-view-delete-confirm").click();
+  await page.waitForTimeout(1000);
+  assert(await savedViewRow.count() === 0, "Saved view row still visible after delete");
+
   console.log("step: quality-issues");
   await page.goto("/auto-aging/quality", { waitUntil: "domcontentloaded" });
   await page.getByRole("heading", { name: "Data Quality" }).waitFor({ timeout: 15000 });
@@ -322,6 +351,7 @@ try {
     dashboardUrl: dashboardUrl.toString(),
     explorerUrl: explorerUrl.toString(),
     autoAgingExplorerUrl: autoAgingExplorerUrl.toString(),
+    savedViewName,
     qualityRowCount,
     importHistoryRows: await importHistoryRows.count(),
     notificationsRendered: totalNotifications,

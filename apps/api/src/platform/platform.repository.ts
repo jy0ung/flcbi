@@ -8,6 +8,7 @@ import type {
   DataQualityIssue,
   ExplorerQuery,
   ExplorerPreset,
+  ExplorerSavedView,
   ExplorerResult,
   ExportJob,
   ExportSubscription,
@@ -91,6 +92,12 @@ export interface PlatformRepository {
   getExportDownload(user: User, exportId: string): Awaitable<ExportDownload>;
   getDashboardPreferences(user: User): Awaitable<DashboardPreferences>;
   saveDashboardPreferences(user: User, preferences: DashboardPreferences): Awaitable<DashboardPreferences>;
+  listExplorerSavedViews(user: User): Awaitable<ExplorerSavedView[]>;
+  createExplorerSavedView(
+    user: User,
+    input: { name: string; query: ExplorerQuery },
+  ): Awaitable<ExplorerSavedView>;
+  deleteExplorerSavedView(user: User, savedViewId: string): Awaitable<void>;
   listSlas(user: User): Awaitable<SlaPolicy[]>;
   updateSla(user: User, id: string, slaDays: number): Awaitable<SlaPolicy>;
   getSummary(

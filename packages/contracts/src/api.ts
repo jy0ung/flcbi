@@ -7,6 +7,7 @@ import type {
   AuthSession,
   DashboardPreferences,
   ExplorerQuery,
+  ExplorerSavedView,
   ExplorerResult,
   ExportJob,
   ExportSubscription,
@@ -46,6 +47,23 @@ export interface DashboardPreferencesResponse {
 
 export interface UpdateDashboardPreferencesRequest {
   executiveMetricIds: DashboardPreferences["executiveMetricIds"];
+}
+
+export interface ExplorerSavedViewsResponse {
+  items: ExplorerSavedView[];
+}
+
+export interface ExplorerSavedViewResponse {
+  item: ExplorerSavedView;
+}
+
+export interface CreateExplorerSavedViewRequest {
+  name: string;
+  query: ExplorerQuery;
+}
+
+export interface CreateExplorerSavedViewResponse {
+  item: ExplorerSavedView;
 }
 
 export interface AgingSummaryResponse {

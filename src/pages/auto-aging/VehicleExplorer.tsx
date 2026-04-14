@@ -1,15 +1,47 @@
 import React from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { EXPLORER_PRESET_LABELS } from '@flcbi/contracts';
-import type { ExplorerPreset, VehicleCanonical } from '@flcbi/contracts';
+import type { ExplorerPreset, ExplorerQuery, ExplorerSavedView, VehicleCanonical } from '@flcbi/contracts';
 import { PageHeader } from '@/components/shared/PageHeader';
 import { QueryErrorState } from '@/components/shared/QueryErrorState';
 import { StatusBadge } from '@/components/shared/StatusBadge';
 import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
 import { toast } from '@/components/ui/sonner';
 import { useAuth } from '@/contexts/AuthContext';
-import { BellRing, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Download, Search, X } from 'lucide-react';
-import { useCreateExplorerExport, useCreateExportSubscription, useExplorer } from '@/hooks/api/use-platform';
+import {
+  BellRing,
+  BookmarkPlus,
+  ChevronLeft,
+  ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
+  Download,
+  Loader2,
+  Search,
+  Trash2,
+  X,
+} from 'lucide-react';
+import {
+  useCreateExplorerExport,
+  useCreateExportSubscription,
+  useCreateExplorerSavedView,
+  useDeleteExplorerSavedView,
+  useExplorer,
+  useExplorerSavedViews,
+} from '@/hooks/api/use-platform';
 
 const presetOptions: Array<{ value: ExplorerPreset; label: string }> = Object.entries(EXPLORER_PRESET_LABELS).map(
   ([value, label]) => ({ value: value as ExplorerPreset, label }),
@@ -90,6 +122,54 @@ function buildPaginationItems(page: number, totalPages: number) {
   return items;
 }
 
+function normalizeExplorerViewQuery(query: ExplorerQuery): ExplorerQuery {
+  return {
+    search: query.search?.trim() || undefined,
+    branch: query.branch ?? 'all',
+    model: query.model ?? 'all',
+    payment: query.payment ?? 'all',
+    preset: query.preset,
+    page: 1,
+    pageSize: query.pageSize ?? defaultExplorerPageSize,
+    sortField: query.sortField ?? 'bg_to_delivery',
+    sortDirection: query.sortDirection ?? 'desc',
+  };
+}
+
+function buildExplorerSearchParams(query: ExplorerQuery) {
+  const params = new URLSearchParams();
+  const normalized = normalizeExplorerViewQuery(query);
+
+  if (normalized.search) params.set('search', normalized.search);
+  if (normalized.branch !== 'all') params.set('branch', normalized.branch);
+  if (normalized.model !== 'all') params.set('model', normalized.model);
+  if (normalized.payment !== 'all') params.set('payment', normalized.payment);
+  if (normalized.preset) params.set('preset', normalized.preset);
+  if (normalized.pageSize !== defaultExplorerPageSize) params.set('pageSize', String(normalized.pageSize));
+  if (normalized.sortField !== 'bg_to_delivery') params.set('sortField', normalized.sortField);
+  if (normalized.sortDirection !== 'desc') params.set('sortDirection', normalized.sortDirection);
+
+  return params;
+}
+
+function explorerViewKey(query: ExplorerQuery) {
+  return JSON.stringify(normalizeExplorerViewQuery(query));
+}
+
+function describeExplorerViewQuery(query: ExplorerQuery) {
+  const parts = [
+    query.search?.trim() ? `Search: ${query.search.trim()}` : null,
+    query.branch && query.branch !== 'all' ? `Branch: ${query.branch}` : null,
+    query.model && query.model !== 'all' ? `Model: ${query.model}` : null,
+    query.payment && query.payment !== 'all' ? `Payment: ${query.payment}` : null,
+    query.preset ? `Preset: ${EXPLORER_PRESET_LABELS[query.preset]}` : null,
+    query.pageSize !== defaultExplorerPageSize ? `${query.pageSize} rows/page` : null,
+    query.sortField ? `Sort: ${String(query.sortField).replaceAll('_', ' ')} ${query.sortDirection === 'asc' ? '↑' : '↓'}` : null,
+  ].filter(Boolean);
+
+  return parts.length > 0 ? parts.join(' · ') : 'All vehicles';
+}
+
 export default function VehicleExplorer() {
   const navigate = useNavigate();
   const { hasRole } = useAuth();
@@ -116,6 +196,51 @@ export default function VehicleExplorer() {
     setSearchParams(next);
   };
 
+  const openSaveDialog = () => {
+    setSavedViewName(activeSavedView?.name ?? '');
+    setIsSaveDialogOpen(true);
+  };
+
+  const applySavedView = (savedView: ExplorerSavedView) => {
+    setSearchParams(buildExplorerSearchParams(savedView.query));
+  };
+
+  const handleSaveView = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const name = savedViewName.trim();
+    if (!name) {
+      toast.error('Saved view name is required');
+      return;
+    }
+
+    try {
+      const response = await createSavedView.mutateAsync({
+        name,
+        query: normalizeExplorerViewQuery(query),
+      });
+      toast.success(`Saved view ${response.item.name}`);
+      setIsSaveDialogOpen(false);
+      setSavedViewName('');
+    } catch (saveError) {
+      toast.error(saveError instanceof Error ? saveError.message : 'Could not save the view');
+    }
+  };
+
+  const handleDeleteSavedView = async () => {
+    if (!deletingSavedView) {
+      return;
+    }
+
+    const target = deletingSavedView;
+    try {
+      await deleteSavedView.mutateAsync(target.id);
+      toast.success(`Deleted saved view ${target.name}`);
+      setDeletingSavedView(null);
+    } catch (deleteError) {
+      toast.error(deleteError instanceof Error ? deleteError.message : 'Could not delete the saved view');
+    }
+  };
+
   const query = {
     search,
     branch: branchFilter,
@@ -129,6 +254,9 @@ export default function VehicleExplorer() {
   };
 
   const { data, error, isError, isLoading, refetch } = useExplorer(query);
+  const savedViewsQuery = useExplorerSavedViews();
+  const createSavedView = useCreateExplorerSavedView();
+  const deleteSavedView = useDeleteExplorerSavedView();
   const createExport = useCreateExplorerExport();
   const createExportSubscription = useCreateExportSubscription();
   const result = data?.result;
@@ -140,6 +268,15 @@ export default function VehicleExplorer() {
   const totalPages = result ? Math.max(1, Math.ceil(result.total / result.pageSize)) : 1;
   const paginationItems = buildPaginationItems(page, totalPages);
   const [pageInput, setPageInput] = React.useState(String(page));
+  const [isSaveDialogOpen, setIsSaveDialogOpen] = React.useState(false);
+  const [savedViewName, setSavedViewName] = React.useState('');
+  const [deletingSavedView, setDeletingSavedView] = React.useState<ExplorerSavedView | null>(null);
+  const savedViews = savedViewsQuery.data?.items ?? [];
+  const currentViewKey = explorerViewKey(query);
+  const activeSavedView = React.useMemo(
+    () => savedViews.find((savedView) => explorerViewKey(savedView.query) === currentViewKey) ?? null,
+    [currentViewKey, savedViews],
+  );
 
   React.useEffect(() => {
     setPageInput(String(page));
@@ -292,6 +429,90 @@ export default function VehicleExplorer() {
           </Button>
         </div>
       )}
+
+      <div className="glass-panel p-4 space-y-4" data-testid="explorer-saved-views-panel">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+          <div className="space-y-1">
+            <p className="text-sm font-medium text-foreground">Saved Views</p>
+            <p className="text-xs text-muted-foreground">
+              Save the current filter and sort combination to reopen a common slice in one click.
+            </p>
+            {activeSavedView && (
+              <Badge variant="secondary" className="w-fit">
+                Active: {activeSavedView.name}
+              </Badge>
+            )}
+          </div>
+          <Button variant="outline" size="sm" onClick={openSaveDialog} data-testid="explorer-save-view-button">
+            <BookmarkPlus className="mr-1 h-3.5 w-3.5" />
+            Save Current View
+          </Button>
+        </div>
+
+        {savedViewsQuery.isError && (
+          <p className="text-xs text-destructive">
+            Could not load saved views right now. You can still save a new one.
+          </p>
+        )}
+
+        {!savedViewsQuery.isError && savedViews.length === 0 && (
+          <p className="text-xs text-muted-foreground" data-testid="explorer-saved-views-empty">
+            No saved views yet. Save this filter combination to come back to it later.
+          </p>
+        )}
+
+        {!savedViewsQuery.isError && savedViews.length > 0 && (
+          <div className="space-y-2">
+            {savedViews.map((savedView) => {
+              const isActive = activeSavedView?.id === savedView.id;
+
+              return (
+                <div
+                  key={savedView.id}
+                  role="button"
+                  tabIndex={0}
+                  aria-label={`Open saved view ${savedView.name}`}
+                  className={`flex items-center justify-between gap-3 rounded-lg border px-3 py-3 transition ${
+                    isActive ? 'border-primary/60 bg-primary/5' : 'border-border bg-secondary/10 hover:bg-secondary/20'
+                  }`}
+                  onClick={() => applySavedView(savedView)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault();
+                      applySavedView(savedView);
+                    }
+                  }}
+                  data-testid="explorer-saved-view-row"
+                >
+                  <div className="min-w-0 space-y-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="truncate text-sm font-medium text-foreground">{savedView.name}</p>
+                      {isActive && (
+                        <Badge variant="secondary" className="text-[10px] uppercase tracking-wide">
+                          Active
+                        </Badge>
+                      )}
+                    </div>
+                    <p className="truncate text-xs text-muted-foreground">{describeExplorerViewQuery(savedView.query)}</p>
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      setDeletingSavedView(savedView);
+                    }}
+                    data-testid="explorer-saved-view-delete"
+                    aria-label={`Delete saved view ${savedView.name}`}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
 
       <div className="glass-panel p-4 flex flex-wrap items-center gap-3">
         <div className="relative">
@@ -547,6 +768,83 @@ export default function VehicleExplorer() {
           </div>
         )}
       </div>
+
+      <Dialog
+        open={isSaveDialogOpen}
+        onOpenChange={(open) => {
+          setIsSaveDialogOpen(open);
+          if (!open) {
+            setSavedViewName('');
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Save Explorer View</DialogTitle>
+            <DialogDescription>
+              Save the current search, branch, model, payment, preset, sort, and page size so you can reopen it later.
+            </DialogDescription>
+          </DialogHeader>
+          <form className="space-y-4" onSubmit={handleSaveView}>
+            <div className="space-y-2">
+              <label htmlFor="explorer-saved-view-name" className="text-sm font-medium text-foreground">
+                View name
+              </label>
+              <Input
+                id="explorer-saved-view-name"
+                data-testid="explorer-save-view-name"
+                value={savedViewName}
+                onChange={(event) => setSavedViewName(event.target.value)}
+                placeholder="e.g. KK Ativa open delivery"
+                maxLength={120}
+              />
+            </div>
+            <p className="text-xs text-muted-foreground">
+              If you save again with the same name, the existing view is updated.
+            </p>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setIsSaveDialogOpen(false)}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={createSavedView.isPending} data-testid="explorer-save-view-submit">
+                {createSavedView.isPending ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <BookmarkPlus className="mr-1 h-4 w-4" />}
+                Save View
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      <AlertDialog
+        open={Boolean(deletingSavedView)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setDeletingSavedView(null);
+          }
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete saved view?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {deletingSavedView
+                ? `Remove ${deletingSavedView.name} from your saved explorer views? This cannot be undone.`
+                : 'Remove this saved explorer view? This cannot be undone.'}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteSavedView.isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => void handleDeleteSavedView()}
+              disabled={deleteSavedView.isPending}
+              data-testid="explorer-saved-view-delete-confirm"
+            >
+              {deleteSavedView.isPending ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : null}
+              Delete view
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
