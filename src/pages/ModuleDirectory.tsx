@@ -2,7 +2,7 @@ import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { PageHeader } from '@/components/shared/PageHeader';
 import { StatusBadge } from '@/components/shared/StatusBadge';
-import { platformModules } from '@/data/demo-data';
+import { platformModules } from '@/config/modules';
 import { Timer, DollarSign, TrendingUp, Settings, Package, Users, UserCheck, Brain } from 'lucide-react';
 
 const iconMap: Record<string, React.ElementType> = { Timer, DollarSign, TrendingUp, Settings, Package, Users, UserCheck, Brain };
@@ -12,7 +12,7 @@ export default function ModuleDirectory() {
 
   return (
     <div className="space-y-6 animate-fade-in">
-      <PageHeader title="Module Directory" description="FLC BI platform modules and capabilities" />
+      <PageHeader title="Module Directory" description="UBS platform modules and capabilities" />
 
       <div className="grid md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
         {platformModules.map(mod => {

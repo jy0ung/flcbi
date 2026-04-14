@@ -7,6 +7,9 @@ import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { DataProvider } from "@/contexts/DataContext";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { Loader2 } from "lucide-react";
+import { RequireAuth } from "@/components/auth/RequireAuth";
+import { RequireRole } from "@/components/auth/RequireRole";
+import { AppRole } from "@/types";
 
 import LoginPage from "@/pages/LoginPage";
 import ForgotPasswordPage from "@/pages/ForgotPasswordPage";
@@ -28,20 +31,10 @@ import SettingsPage from "@/pages/admin/SettingsPage";
 import NotFound from "@/pages/NotFound";
 
 const queryClient = new QueryClient();
+const USER_MANAGEMENT_ROLES: AppRole[] = ["super_admin", "company_admin"];
+const AUDIT_ROLES: AppRole[] = ["super_admin", "company_admin", "director"];
 
-function ProtectedRoutes() {
-  const { isAuthenticated, loading } = useAuth();
-
-  if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-background">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
-      </div>
-    );
-  }
-
-  if (!isAuthenticated) return <Navigate to="/login" replace />;
-
+function AppShellRoutes() {
   return (
     <DataProvider>
       <AppLayout>
@@ -58,8 +51,30 @@ function ProtectedRoutes() {
           <Route path="/auto-aging/sla" element={<SLAAdmin />} />
           <Route path="/auto-aging/mappings" element={<MappingAdmin />} />
           <Route path="/auto-aging/history" element={<ImportHistory />} />
-          <Route path="/admin/users" element={<UserManagement />} />
-          <Route path="/admin/audit" element={<AuditLog />} />
+          <Route
+            path="/admin/users"
+            element={
+              <RequireRole
+                roles={USER_MANAGEMENT_ROLES}
+                title="Restricted admin area"
+                message="Only company administrators and super administrators can manage users and roles."
+              >
+                <UserManagement />
+              </RequireRole>
+            }
+          />
+          <Route
+            path="/admin/audit"
+            element={
+              <RequireRole
+                roles={AUDIT_ROLES}
+                title="Restricted audit area"
+                message="Only approved leadership roles can view the audit log."
+              >
+                <AuditLog />
+              </RequireRole>
+            }
+          />
           <Route path="/admin/settings" element={<SettingsPage />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
@@ -70,6 +85,7 @@ function ProtectedRoutes() {
 
 function AuthRoutes() {
   const { isAuthenticated, loading } = useAuth();
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
@@ -77,6 +93,7 @@ function AuthRoutes() {
       </div>
     );
   }
+
   if (isAuthenticated) return <Navigate to="/" replace />;
   return <LoginPage />;
 }
@@ -92,7 +109,14 @@ const App = () => (
             <Route path="/login" element={<AuthRoutes />} />
             <Route path="/forgot-password" element={<ForgotPasswordPage />} />
             <Route path="/reset-password" element={<ResetPasswordPage />} />
-            <Route path="/*" element={<ProtectedRoutes />} />
+            <Route
+              path="/*"
+              element={
+                <RequireAuth>
+                  <AppShellRoutes />
+                </RequireAuth>
+              }
+            />
           </Routes>
         </BrowserRouter>
       </AuthProvider>

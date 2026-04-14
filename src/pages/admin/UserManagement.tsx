@@ -11,6 +11,7 @@ import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
 import { AppRole, AccessScope, ROLE_DEFAULT_SCOPE } from '@/types';
 import { demoBranches } from '@/data/demo-data';
+import { AccessDenied } from '@/components/auth/AccessDenied';
 
 interface ProfileRow {
   id: string;
@@ -41,12 +42,8 @@ const SCOPES: { value: AccessScope; label: string }[] = [
   { value: 'global', label: 'Global — all companies' },
 ];
 
-function scopeLabel(scope: string): string {
-  return SCOPES.find(s => s.value === scope)?.label || scope;
-}
-
 export default function UserManagement() {
-  const { user, hasRole } = useAuth();
+  const { hasRole } = useAuth();
   const [profiles, setProfiles] = useState<ProfileRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [editUser, setEditUser] = useState<ProfileRow | null>(null);
@@ -59,15 +56,22 @@ export default function UserManagement() {
 
   useEffect(() => {
     async function load() {
+      if (!canManage) {
+        setLoading(false);
+        return;
+      }
+
       const { data } = await supabase
         .from('profiles')
         .select('id, email, name, role, company_id, branch_id, access_scope, created_at')
         .order('created_at', { ascending: true });
+
       setProfiles((data || []) as unknown as ProfileRow[]);
       setLoading(false);
     }
+
     load();
-  }, []);
+  }, [canManage]);
 
   const openEdit = (p: ProfileRow) => {
     setEditUser(p);
@@ -85,6 +89,7 @@ export default function UserManagement() {
   const handleSave = async () => {
     if (!editUser) return;
     setSaving(true);
+
     const { error } = await supabase
       .from('profiles')
       .update({
@@ -94,6 +99,7 @@ export default function UserManagement() {
         updated_at: new Date().toISOString(),
       })
       .eq('id', editUser.id);
+
     if (error) {
       toast.error('Failed to update user: ' + error.message);
     } else {
@@ -101,6 +107,7 @@ export default function UserManagement() {
       setProfiles(prev => prev.map(p => p.id === editUser.id ? { ...p, role: editRole, access_scope: editScope, branch_id: editBranch === 'none' ? null : editBranch } : p));
       setEditUser(null);
     }
+
     setSaving(false);
   };
 
@@ -109,6 +116,15 @@ export default function UserManagement() {
       <div className="flex items-center justify-center h-64">
         <Loader2 className="h-8 w-8 text-primary animate-spin" />
       </div>
+    );
+  }
+
+  if (!canManage) {
+    return (
+      <AccessDenied
+        title="Restricted user management area"
+        message="Only company administrators and super administrators can manage users and roles."
+      />
     );
   }
 
@@ -124,7 +140,7 @@ export default function UserManagement() {
               <th className="px-4 py-3 text-xs text-muted-foreground font-medium">Role</th>
               <th className="px-4 py-3 text-xs text-muted-foreground font-medium">Access Scope</th>
               <th className="px-4 py-3 text-xs text-muted-foreground font-medium">Branch</th>
-              {canManage && <th className="px-4 py-3 text-xs text-muted-foreground font-medium">Actions</th>}
+              <th className="px-4 py-3 text-xs text-muted-foreground font-medium">Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -147,18 +163,15 @@ export default function UserManagement() {
                   <StatusBadge status={p.access_scope} />
                 </td>
                 <td className="px-4 py-3 text-foreground">{p.branch_id || '—'}</td>
-                {canManage && (
-                  <td className="px-4 py-3">
-                    <Button variant="ghost" size="sm" onClick={() => openEdit(p)}>Edit</Button>
-                  </td>
-                )}
+                <td className="px-4 py-3">
+                  <Button variant="ghost" size="sm" onClick={() => openEdit(p)}>Edit</Button>
+                </td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
 
-      {/* Edit Dialog */}
       <Dialog open={!!editUser} onOpenChange={(open) => !open && setEditUser(null)}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
