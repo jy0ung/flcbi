@@ -39,7 +39,7 @@ const smokeEnv = {
 };
 
 const email = process.env.FLCBI_SMOKE_EMAIL ?? smokeEnv.BOOTSTRAP_ADMIN_EMAIL ?? "admin@flcbi.local";
-const password = process.env.FLCBI_SMOKE_PASSWORD ?? smokeEnv.BOOTSTRAP_ADMIN_PASSWORD ?? "apple2";
+const password = process.env.FLCBI_SMOKE_PASSWORD ?? smokeEnv.BOOTSTRAP_ADMIN_PASSWORD ?? "fladmin123";
 const baseUrl =
   process.env.FLCBI_SMOKE_BASE_URL ??
   `http://127.0.0.1:${smokeEnv.VITE_PORT ?? "18133"}`;
@@ -218,6 +218,34 @@ try {
   await page.waitForURL("**pageSize=25**", { timeout: 15000 });
   await page.getByTestId("vehicle-explorer-pagination-summary").waitFor({ timeout: 15000 });
 
+  console.log("step: auto-aging-drilldown");
+  await page.goto("/auto-aging", { waitUntil: "domcontentloaded" });
+  await page.getByRole("heading", { name: "Auto Aging Dashboard" }).waitFor({ timeout: 15000 });
+
+  const autoAgingBranchSelect = page.locator("select").first();
+  const autoAgingBranchOptions = await autoAgingBranchSelect.locator("option").allTextContents();
+  const autoAgingBranchChoice = autoAgingBranchOptions.find((value) => value !== "All Branches");
+  assert(Boolean(autoAgingBranchChoice), "No auto-aging branch filter options found");
+
+  await autoAgingBranchSelect.selectOption({ label: autoAgingBranchChoice });
+  await page.waitForTimeout(800);
+
+  const autoAgingModelSelect = page.locator("select").nth(1);
+  const autoAgingModelOptions = await autoAgingModelSelect.locator("option").allTextContents();
+  const autoAgingModelChoice = autoAgingModelOptions.find((value) => value !== "All Models");
+  assert(Boolean(autoAgingModelChoice), "No auto-aging model filter options found");
+
+  await autoAgingModelSelect.selectOption({ label: autoAgingModelChoice });
+  await page.waitForTimeout(800);
+
+  await page.locator(".kpi-card").first().click();
+  await page.waitForURL("**/auto-aging/vehicles**", { timeout: 15000 });
+  await page.getByRole("heading", { name: "Vehicle Explorer" }).waitFor({ timeout: 15000 });
+
+  const autoAgingExplorerUrl = new URL(page.url());
+  assert(autoAgingExplorerUrl.searchParams.get("branch") === autoAgingBranchChoice, "Auto-aging branch filter not carried into explorer");
+  assert(autoAgingExplorerUrl.searchParams.get("model") === autoAgingModelChoice, "Auto-aging model filter not carried into explorer");
+
   console.log("step: import-history");
   await page.goto("/auto-aging/history", { waitUntil: "domcontentloaded" });
   await page.getByRole("heading", { name: "Import History" }).waitFor({ timeout: 15000 });
@@ -264,6 +292,7 @@ try {
     initialCardCount,
     dashboardUrl: dashboardUrl.toString(),
     explorerUrl: explorerUrl.toString(),
+    autoAgingExplorerUrl: autoAgingExplorerUrl.toString(),
     importHistoryRows: await importHistoryRows.count(),
     notificationsRendered: totalNotifications,
     exportsRendered: renderedExports,

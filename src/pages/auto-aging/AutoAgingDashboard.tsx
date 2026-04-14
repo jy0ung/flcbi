@@ -12,6 +12,21 @@ import { OutlierScatterChart } from '@/components/charts/OutlierScatterChart';
 import { PaymentPieChart } from '@/components/charts/PaymentPieChart';
 import { useAgingSummary } from '@/hooks/api/use-platform';
 
+function buildExplorerPath(branchFilter: string, modelFilter: string) {
+  const params = new URLSearchParams();
+
+  if (branchFilter !== 'all') {
+    params.set('branch', branchFilter);
+  }
+
+  if (modelFilter !== 'all') {
+    params.set('model', modelFilter);
+  }
+
+  const query = params.toString();
+  return query ? `/auto-aging/vehicles?${query}` : '/auto-aging/vehicles';
+}
+
 export default function AutoAgingDashboard() {
   const navigate = useNavigate();
   const [branchFilter, setBranchFilter] = useState<string>('all');
@@ -21,6 +36,7 @@ export default function AutoAgingDashboard() {
     model: modelFilter,
   });
   const summary = data?.summary;
+  const explorerPath = buildExplorerPath(branchFilter, modelFilter);
 
   if (isLoading) {
     return <div className="text-sm text-muted-foreground">Loading auto aging dashboard...</div>;
@@ -95,7 +111,10 @@ export default function AutoAgingDashboard() {
               <p className="text-xs text-foreground">{new Date(summary.lastRefresh).toLocaleString()}</p>
             </div>
             <Button variant="outline" size="sm" onClick={() => void refetch()}><RefreshCw className="h-3.5 w-3.5 mr-1" />Refresh</Button>
-            <Button variant="outline" size="sm"><Download className="h-3.5 w-3.5 mr-1" />Export</Button>
+            <Button variant="outline" size="sm" onClick={() => navigate('/auto-aging/exports')}>
+              <Download className="h-3.5 w-3.5 mr-1" />
+              View Exports
+            </Button>
           </div>
         }
       />
@@ -149,7 +168,7 @@ export default function AutoAgingDashboard() {
             status={kpi.overdueCount > 10 ? 'critical' : kpi.overdueCount > 0 ? 'warning' : 'normal'}
             validCount={kpi.validCount}
             overdueCount={kpi.overdueCount}
-            onClick={() => navigate('/auto-aging/vehicles')}
+            onClick={() => navigate(explorerPath)}
           />
         ))}
       </div>
@@ -205,7 +224,7 @@ export default function AutoAgingDashboard() {
       <div className="glass-panel p-5">
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-sm font-semibold text-foreground">Slowest Vehicles (BG → Delivery)</h3>
-          <button onClick={() => navigate('/auto-aging/vehicles')} className="text-xs text-primary hover:underline">View All →</button>
+          <button onClick={() => navigate(explorerPath)} className="text-xs text-primary hover:underline">View All →</button>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">

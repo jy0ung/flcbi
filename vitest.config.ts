@@ -3,12 +3,16 @@ import react from "@vitejs/plugin-react-swc";
 import path from "path";
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react({ tsDecorators: true })],
   test: {
     environment: "jsdom",
     globals: true,
     setupFiles: ["./src/test/setup.ts"],
-    include: ["src/**/*.{test,spec}.{ts,tsx}", "packages/contracts/src/**/*.{test,spec}.{ts,tsx}"],
+    include: [
+      "src/**/*.{test,spec}.{ts,tsx}",
+      "apps/api/src/**/*.{test,spec}.{ts,tsx}",
+      "packages/contracts/src/**/*.{test,spec}.{ts,tsx}",
+    ],
   },
   resolve: {
     alias: {

@@ -1,0 +1,18 @@
+[Unit]
+Description=BI Web Application - React Frontend
+After=network.target bi-api.service bi-redis.service
+Wants=bi-api.service bi-redis.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=__ROOT_DIR__
+Environment="NODE_ENV=production"
+ExecStart=/usr/bin/env bash -lc 'cd __ROOT_DIR__ && source ./scripts/_test_server_env.sh && exec npm run preview -- --port __WEB_PORT__ --host 0.0.0.0'
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

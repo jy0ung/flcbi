@@ -23,10 +23,18 @@ export default function MappingAdmin() {
   return (
     <div className="space-y-6 animate-fade-in">
       <PageHeader
-        title="Mapping Administration"
-        description="Manage data normalization rules for imports"
-        breadcrumbs={[{ label: 'FLC BI' }, { label: 'Auto Aging' }, { label: 'Mappings' }]}
+        title="Mapping Reference"
+        description="Read-only alias table used by the import parser"
+        breadcrumbs={[{ label: 'FLC BI' }, { label: 'Auto Aging' }, { label: 'Mapping Reference' }]}
       />
+
+      <div className="glass-panel p-4 border border-border/50">
+        <p className="text-sm text-muted-foreground">
+          This page is a reference view only. Update{' '}
+          <code className="font-mono text-foreground">src/lib/import-parser.ts</code> to change canonical values
+          or alias handling, then redeploy the platform.
+        </p>
+      </div>
 
       {mappingCategories.map(cat => (
         <div key={cat.title} className="glass-panel overflow-hidden">

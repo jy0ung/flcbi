@@ -66,6 +66,14 @@ Then install the site config on the server:
 sudo bash scripts/install-nginx-flcbi.sh
 ```
 
+For a full server reprovision, use the idempotent deploy script from the server root:
+
+```bash
+sudo bash scripts/deploy-test-server.sh
+```
+
+This rebuilds the platform, installs the nginx site, writes the `bi-*` systemd units, and restarts the runtime services. See [docs/test-server-deployment.md](docs/test-server-deployment.md) for the full flow.
+
 5. Run the platform:
 
 ```bash
@@ -121,6 +129,7 @@ npm run dev:worker
 npm run dev:scheduler
 npm run bootstrap:supabase
 npm run test-server:bootstrap
+npm run test-server:deploy
 npm run test-server:dev
 npm run test-server:links
 npm run test-server:supabase:migrate

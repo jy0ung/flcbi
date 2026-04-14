@@ -1,0 +1,18 @@
+[Unit]
+Description=BI Redis Queue Service
+After=network.target docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=root
+WorkingDirectory=__ROOT_DIR__
+ExecStart=/usr/bin/env bash -lc 'cd __ROOT_DIR__ && source ./scripts/_test_server_env.sh && __DOCKER_BIN__ compose up -d redis && for _ in $(seq 1 30); do __DOCKER_BIN__ compose exec -T redis redis-cli ping >/dev/null 2>&1 && exit 0; sleep 1; done; echo "Redis did not become ready in time" >&2; exit 1'
+ExecStop=/usr/bin/env bash -lc 'cd __ROOT_DIR__ && __DOCKER_BIN__ compose stop redis'
+TimeoutStartSec=60
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

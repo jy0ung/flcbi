@@ -117,9 +117,39 @@ function ProtectedRoutes() {
           )}
         />
         <Route path="/auto-aging/quality" element={<DataQuality />} />
-        <Route path="/auto-aging/sla" element={<SLAAdmin />} />
-        <Route path="/auto-aging/mappings" element={<MappingAdmin />} />
-        <Route path="/auto-aging/history" element={<ImportHistory />} />
+        <Route
+          path="/auto-aging/sla"
+          element={(
+            <RoleBoundary
+              roles={["company_admin", "super_admin", "director"]}
+              title="SLA Access Required"
+            >
+              <SLAAdmin />
+            </RoleBoundary>
+          )}
+        />
+        <Route
+          path="/auto-aging/mappings"
+          element={(
+            <RoleBoundary
+              roles={["company_admin", "super_admin", "director"]}
+              title="Mapping Access Required"
+            >
+              <MappingAdmin />
+            </RoleBoundary>
+          )}
+        />
+        <Route
+          path="/auto-aging/history"
+          element={(
+            <RoleBoundary
+              roles={["company_admin", "super_admin", "director"]}
+              title="Import History Access Required"
+            >
+              <ImportHistory />
+            </RoleBoundary>
+          )}
+        />
         <Route
           path="/admin/users"
           element={(

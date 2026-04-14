@@ -24,6 +24,7 @@ This project is configured to run on `192.168.1.133` without clashing with the o
 ## Commands
 ```bash
 npm run test-server:bootstrap
+npm run test-server:deploy
 npm run test-server:dev
 npm run test-server:links
 npm run smoke:import
@@ -38,6 +39,14 @@ The public test URL is intended to be served by nginx on port `80`, proxying the
 ```bash
 sudo bash scripts/install-nginx-flcbi.sh
 ```
+
+To reprovision the full test-server runtime, use:
+
+```bash
+sudo bash scripts/deploy-test-server.sh
+```
+
+That script installs the nginx site, writes the systemd unit files from `ops/systemd/*.service.template`, rebuilds the platform, and restarts the services. The details are documented in [test-server-deployment.md](./test-server-deployment.md).
 
 Because `flcbi.test` is not public DNS, each client machine needs a hosts entry:
 
