@@ -2,7 +2,7 @@ import React from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import {
-  Timer, LayoutDashboard, Bell, Search, Settings, Shield, FileText,
+  Timer, LayoutDashboard, Bell, Settings, Shield, FileText,
   LogOut, ChevronLeft, ChevronRight, Upload, Car, AlertTriangle, Gauge,
   Map, History, Grid3X3, UserCircle
 } from 'lucide-react';
@@ -52,18 +52,16 @@ export function AppSidebar({ collapsed, setCollapsed }: AppSidebarProps) {
 
   return (
     <aside className={cn(
-      "h-screen flex flex-col bg-sidebar border-r border-sidebar-border transition-all duration-300 flex-shrink-0 sticky top-0",
-      collapsed ? "w-16" : "w-64"
+      'h-screen flex flex-col bg-sidebar border-r border-sidebar-border transition-all duration-300 flex-shrink-0 sticky top-0',
+      collapsed ? 'w-16' : 'w-64'
     )}>
-      {/* Logo */}
       <div className="h-14 flex items-center px-4 border-b border-sidebar-border gap-2">
         <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center flex-shrink-0">
-          <span className="text-primary-foreground font-bold text-sm">F</span>
+          <span className="text-primary-foreground font-bold text-sm">U</span>
         </div>
-        {!collapsed && <span className="text-foreground font-semibold text-lg">FLC BI</span>}
+        {!collapsed && <span className="text-foreground font-semibold text-lg">FLC UBS</span>}
       </div>
 
-      {/* Navigation */}
       <nav className="flex-1 overflow-y-auto py-3 px-2 space-y-4">
         {sections.map(section => {
           const items = navItems.filter(n => n.section === section);
@@ -84,10 +82,10 @@ export function AppSidebar({ collapsed, setCollapsed }: AppSidebarProps) {
                     key={item.path}
                     to={item.path}
                     className={cn(
-                      "flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors",
+                      'flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-colors',
                       isActive(item.path)
-                        ? "nav-item-active"
-                        : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+                        ? 'nav-item-active'
+                        : 'text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground'
                     )}
                     title={collapsed ? item.label : undefined}
                   >
@@ -101,13 +99,12 @@ export function AppSidebar({ collapsed, setCollapsed }: AppSidebarProps) {
         })}
       </nav>
 
-      {/* User & Collapse */}
       <div className="border-t border-sidebar-border p-2 space-y-1">
         <Link
           to="/profile"
           className={cn(
-            "flex items-center gap-3 px-3 py-2 rounded-md text-sm text-sidebar-foreground hover:bg-sidebar-accent transition-colors",
-            collapsed && "justify-center"
+            'flex items-center gap-3 px-3 py-2 rounded-md text-sm text-sidebar-foreground hover:bg-sidebar-accent transition-colors',
+            collapsed && 'justify-center'
           )}
         >
           <UserCircle className="h-4 w-4 flex-shrink-0" />
@@ -116,8 +113,8 @@ export function AppSidebar({ collapsed, setCollapsed }: AppSidebarProps) {
         <button
           onClick={logout}
           className={cn(
-            "flex items-center gap-3 px-3 py-2 rounded-md text-sm text-sidebar-foreground hover:bg-destructive/20 hover:text-destructive transition-colors w-full",
-            collapsed && "justify-center"
+            'flex items-center gap-3 px-3 py-2 rounded-md text-sm text-sidebar-foreground hover:bg-destructive/20 hover:text-destructive transition-colors w-full',
+            collapsed && 'justify-center'
           )}
         >
           <LogOut className="h-4 w-4 flex-shrink-0" />
