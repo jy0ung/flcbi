@@ -254,6 +254,88 @@ export interface ParsedWorkbookSummary {
   status: "validated" | "failed";
 }
 
+export interface ExplorerValueMapping {
+  rawValue: string;
+  normalizedValue: string;
+  approved?: boolean;
+}
+
+function normalizeMappingKey(value: string | undefined | null) {
+  return value?.trim().toLowerCase() ?? "";
+}
+
+export function applyApprovedExplorerMappings(
+  rows: VehicleRaw[],
+  mappings?: {
+    branches?: ExplorerValueMapping[];
+    payments?: ExplorerValueMapping[];
+  },
+): VehicleRaw[] {
+  if (!mappings?.branches?.length && !mappings?.payments?.length) {
+    return rows;
+  }
+
+  const branchMap = new Map(
+    (mappings?.branches ?? [])
+      .filter((mapping) => (mapping.approved ?? true) && normalizeMappingKey(mapping.rawValue) && mapping.normalizedValue.trim())
+      .map((mapping) => [normalizeMappingKey(mapping.rawValue), mapping.normalizedValue.trim()]),
+  );
+  const paymentMap = new Map(
+    (mappings?.payments ?? [])
+      .filter((mapping) => (mapping.approved ?? true) && normalizeMappingKey(mapping.rawValue) && mapping.normalizedValue.trim())
+      .map((mapping) => [normalizeMappingKey(mapping.rawValue), mapping.normalizedValue.trim()]),
+  );
+
+  if (branchMap.size === 0 && paymentMap.size === 0) {
+    return rows;
+  }
+
+  return rows.map((row) => {
+    const normalizedBranchCode = branchMap.get(normalizeMappingKey(row.branch_code)) ?? row.branch_code;
+    const normalizedPaymentMethod = paymentMap.get(normalizeMappingKey(row.payment_method)) ?? row.payment_method;
+
+    if (normalizedBranchCode === row.branch_code && normalizedPaymentMethod === row.payment_method) {
+      return row;
+    }
+
+    return {
+      ...row,
+      branch_code: normalizedBranchCode,
+      payment_method: normalizedPaymentMethod,
+    };
+  });
+}
+
+export function buildVehicleNegativeQualityIssues(vehicle: VehicleCanonical): DataQualityIssue[] {
+  const issues: DataQualityIssue[] = [];
+  const kpiFields = [
+    ["bg_to_delivery", "BG→Delivery"],
+    ["bg_to_shipment_etd", "BG→ETD"],
+    ["etd_to_outlet_received", "ETD→Outlet"],
+    ["outlet_received_to_reg", "Outlet→Reg"],
+    ["reg_to_delivery", "Reg→Delivery"],
+    ["bg_to_disb", "BG→Disb"],
+    ["delivery_to_disb", "Delivery→Disb"],
+  ] as const;
+
+  for (const [field, label] of kpiFields) {
+    const value = vehicle[field];
+    if (value !== null && value !== undefined && value < 0) {
+      issues.push({
+        id: `neg-${vehicle.chassis_no}-${field}`,
+        chassisNo: vehicle.chassis_no,
+        field,
+        issueType: "negative",
+        message: `${label} is negative (${value} days)`,
+        severity: "error",
+        importBatchId: vehicle.import_batch_id,
+      });
+    }
+  }
+
+  return issues;
+}
+
 export function summarizeParsedWorkbook(parsed: ParsedWorkbookResult): ParsedWorkbookSummary {
   const errorRows = parsed.issues.filter((issue) => issue.severity === "error").length;
   return {
@@ -465,32 +547,8 @@ export function publishCanonical(rows: VehicleRaw[]): { canonical: VehicleCanoni
       delivery_to_disb: diff(best.delivery_date, best.disb_date),
     };
 
-    const kpiFields = [
-      ["bg_to_delivery", "BG→Delivery"],
-      ["bg_to_shipment_etd", "BG→ETD"],
-      ["etd_to_outlet_received", "ETD→Outlet"],
-      ["outlet_received_to_reg", "Outlet→Reg"],
-      ["reg_to_delivery", "Reg→Delivery"],
-      ["bg_to_disb", "BG→Disb"],
-      ["delivery_to_disb", "Delivery→Disb"],
-    ] as const;
-
-    kpiFields.forEach(([field, label]) => {
-      const value = vehicle[field];
-      if (value !== null && value !== undefined && value < 0) {
-        issues.push({
-          id: `neg-${chassis}-${field}`,
-          chassisNo: chassis,
-          field,
-          issueType: "negative",
-          message: `${label} is negative (${value} days)`,
-          severity: "error",
-          importBatchId: best.import_batch_id,
-        });
-      }
-    });
-
     canonical.push(vehicle);
+    issues.push(...buildVehicleNegativeQualityIssues(vehicle));
   });
 
   return { canonical, issues };

@@ -1,19 +1,14 @@
-import type { AppRole, VehicleCanonical } from "./domain.js";
+import type { AppRole, AuditEvent, User, VehicleCanonical } from "./domain.js";
 
-export const VEHICLE_EXPLORER_EDIT_ROLES: readonly AppRole[] = [
+export const VEHICLE_CORRECTION_EDITOR_ROLES: readonly AppRole[] = [
   "super_admin",
   "company_admin",
   "director",
   "general_manager",
   "manager",
-  "sales",
-  "accounts",
-  "analyst",
 ] as const;
 
-export const VEHICLE_CORRECTION_EDITOR_ROLES: readonly AppRole[] = [
-  ...VEHICLE_EXPLORER_EDIT_ROLES,
-];
+export const VEHICLE_EXPLORER_EDIT_ROLES = VEHICLE_CORRECTION_EDITOR_ROLES;
 
 export const VEHICLE_CORRECTION_DATE_FIELDS = [
   "bg_date",
@@ -70,6 +65,40 @@ export interface VehicleCorrection {
 }
 
 type VehicleCorrectionLike = Pick<VehicleCorrection, "field" | "value">;
+
+export function canManageVehicleCorrections(userOrRole: Pick<User, "role"> | AppRole | null | undefined) {
+  if (!userOrRole) {
+    return false;
+  }
+
+  const role = typeof userOrRole === "string" ? userOrRole : userOrRole.role;
+  return VEHICLE_CORRECTION_EDITOR_ROLES.includes(role);
+}
+
+export function buildVehicleCorrectionAuditEvent({
+  chassisNo,
+  fields,
+  reason,
+  userId,
+  userName,
+}: {
+  chassisNo: string;
+  fields: readonly VehicleCorrectionField[];
+  reason: string;
+  userId: string;
+  userName: string;
+}): Omit<AuditEvent, "id" | "createdAt"> {
+  const normalizedReason = reason.trim();
+
+  return {
+    action: "vehicle_corrections_updated",
+    entity: "vehicle_record_correction",
+    entityId: chassisNo,
+    userId,
+    userName,
+    details: `Updated ${fields.map((field) => VEHICLE_CORRECTION_FIELD_LABELS[field]).join(", ")} for ${chassisNo}. Reason: ${normalizedReason}`,
+  };
+}
 
 function diff(from?: string, to?: string) {
   if (!from || !to) {

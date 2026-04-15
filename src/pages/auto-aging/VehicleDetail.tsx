@@ -1,6 +1,6 @@
 import React from "react";
 import {
-  VEHICLE_CORRECTION_EDITOR_ROLES,
+  canManageVehicleCorrections,
   VEHICLE_CORRECTION_FIELD_LABELS,
   VEHICLE_CORRECTION_SELECT_FIELDS,
 } from "@flcbi/contracts";
@@ -44,8 +44,8 @@ function formatCorrectionTimestamp(value: string) {
 export default function VehicleDetail() {
   const { chassisNo } = useParams<{ chassisNo: string }>();
   const navigate = useNavigate();
-  const { hasRole } = useAuth();
-  const canEditCorrections = hasRole(VEHICLE_CORRECTION_EDITOR_ROLES);
+  const { user } = useAuth();
+  const canEditCorrections = canManageVehicleCorrections(user);
   const { data, error, isError, isLoading, refetch } = useVehicleDetail(chassisNo);
   const mappingsQuery = useExplorerMappings();
   const updateCorrections = useUpdateVehicleCorrections();

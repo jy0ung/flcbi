@@ -9,6 +9,14 @@ import { Observable, tap } from "rxjs";
 import type { AuthenticatedRequest } from "./auth.types.js";
 import { PLATFORM_REPOSITORY, type PlatformRepository } from "../platform/platform.repository.js";
 
+export function shouldSkipGenericAudit(method: string, path: string) {
+  const normalizedMethod = method.toUpperCase();
+  const normalizedPath = `/${path}`.replace(/\/+/g, "/");
+
+  return normalizedMethod === "PATCH"
+    && /^\/(?:v1\/)?aging\/vehicles\/[^/]+\/corrections$/.test(normalizedPath);
+}
+
 @Injectable()
 export class AuditInterceptor implements NestInterceptor {
   constructor(@Inject(PLATFORM_REPOSITORY) private readonly store: PlatformRepository) {}
@@ -22,7 +30,7 @@ export class AuditInterceptor implements NestInterceptor {
 
     return next.handle().pipe(
       tap(() => {
-        if (!shouldAudit || !request.user) return;
+        if (!shouldAudit || !request.user || shouldSkipGenericAudit(method, request.path)) return;
         void Promise.resolve(this.store.addAuditEvent({
           action: `${method.toLowerCase()}_${request.path.replace(/\//g, "_").replace(/^_+/, "")}`,
           entity: "http_request",

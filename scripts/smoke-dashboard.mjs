@@ -179,16 +179,17 @@ async function openHeaderFilter(page, columnKey) {
 }
 
 async function waitForExplorerReady(page) {
-  const waitForPagination = async () => {
+  const waitForExplorer = async () => {
     await page.getByRole("heading", { name: "Vehicle Explorer" }).waitFor({ timeout: explorerLoadTimeout });
     await page.getByTestId("vehicle-explorer-toolbar").waitFor({ timeout: explorerLoadTimeout });
+    await page.getByTestId("vehicle-explorer-pagination-summary").waitFor({ timeout: explorerLoadTimeout });
   };
 
   try {
-    await waitForPagination();
+    await waitForExplorer();
   } catch (error) {
     await page.reload({ waitUntil: "domcontentloaded" });
-    await waitForPagination();
+    await waitForExplorer();
   }
 }
 
@@ -310,21 +311,27 @@ try {
     const select = document.querySelector("select");
     return Boolean(select && select.options.length > 1);
   }, undefined, { timeout: explorerLoadTimeout });
-  const autoAgingBranchOptions = await autoAgingBranchSelect.locator("option").allTextContents();
+  const autoAgingBranchOptions = await autoAgingBranchSelect.locator("option").evaluateAll((options) => options.map((option) => ({
+    label: option.textContent?.trim() ?? "",
+    value: option.value,
+  })));
   const autoAgingModelSelect = page.locator("select").nth(1);
-  const autoAgingBranchChoices = autoAgingBranchOptions.filter((value) => value !== "All Branches");
+  const autoAgingBranchChoices = autoAgingBranchOptions.filter((option) => option.value !== "all");
   let autoAgingBranchChoice = null;
   let autoAgingModelChoice = null;
 
   for (const branchChoice of autoAgingBranchChoices) {
-    await autoAgingBranchSelect.selectOption({ label: branchChoice });
+    await autoAgingBranchSelect.selectOption(branchChoice.value);
     await page.waitForTimeout(1200);
 
-    const autoAgingModelOptions = await autoAgingModelSelect.locator("option").allTextContents();
-    const modelChoice = autoAgingModelOptions.find((value) => value !== "All Models");
+    const autoAgingModelOptions = await autoAgingModelSelect.locator("option").evaluateAll((options) => options.map((option) => ({
+      label: option.textContent?.trim() ?? "",
+      value: option.value,
+    })));
+    const modelChoice = autoAgingModelOptions.find((option) => option.value !== "all");
     if (modelChoice) {
-      autoAgingBranchChoice = branchChoice;
-      autoAgingModelChoice = modelChoice;
+      autoAgingBranchChoice = branchChoice.label;
+      autoAgingModelChoice = modelChoice.label;
       break;
     }
   }
@@ -349,6 +356,7 @@ try {
   await page.getByTestId("explorer-save-view-button").click();
   await page.getByTestId("explorer-save-view-name").fill(savedViewName);
   await page.getByTestId("explorer-save-view-submit").click();
+  await page.getByTestId("explorer-saved-views-trigger").filter({ hasText: savedViewName }).waitFor({ timeout: explorerLoadTimeout });
   await page.goto("/auto-aging/vehicles?pageSize=100", { waitUntil: "domcontentloaded" });
   await waitForExplorerReady(page);
   await page.getByTestId("explorer-saved-views-trigger").click();

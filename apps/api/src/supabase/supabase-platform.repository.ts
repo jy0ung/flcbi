@@ -9,10 +9,14 @@ import {
   UnauthorizedException,
 } from "@nestjs/common";
 import {
+  applyApprovedExplorerMappings,
   applyVehicleCorrections,
   buildVehicleExplorerExportRows,
   buildAlertNotificationFingerprint,
   buildAgingSummary,
+  buildVehicleCorrectionAuditEvent,
+  buildVehicleNegativeQualityIssues,
+  canManageVehicleCorrections,
   compareMetricValue,
   describeExplorerQuery,
   type Branch,
@@ -31,7 +35,6 @@ import {
   publishCanonical,
   queryVehicles,
   summarizeParsedWorkbook,
-  VEHICLE_EXPLORER_EDIT_ROLES,
   type AppRole,
   type AlertRule,
   type AuditEvent,
@@ -203,6 +206,7 @@ interface VehicleRow {
   company_id: string;
   branch_id: string | null;
   branch_code: string | null;
+  dataset_version_id: string | null;
   import_job_id: string;
   source_row_id: string | null;
   chassis_no: string;
@@ -303,6 +307,7 @@ interface BranchRow {
 
 interface PublishVehicleRow {
   branch_id: string | null;
+  source_row_id: string | null;
   chassis_no: string;
   model: string;
   payment_method: string;
@@ -330,6 +335,7 @@ interface PublishVehicleRow {
 
 interface PublishQualityIssueRow {
   branch_id: string | null;
+  source_row_id: string | null;
   chassis_no: string | null;
   field: string;
   issue_type: DataQualityIssue["issueType"];
@@ -994,19 +1000,26 @@ export class SupabasePlatformRepository implements PlatformRepository {
       throw new NotFoundException(`Import ${id} preview is no longer available`);
     }
 
-    const { canonical, issues } = publishCanonical(
+    const approvedMappings = await this.fetchApprovedExplorerMappings(companyId);
+    const normalizedPreviewRows = applyApprovedExplorerMappings(
       previewRows.map((row) => ({ ...row, import_batch_id: id })),
+      approvedMappings,
     );
+    const { canonical, issues } = publishCanonical(normalizedPreviewRows);
     if (canonical.length === 0) {
       throw new BadRequestException("No canonical vehicle rows were produced from this import");
     }
     const branchIdByChassis = new Map(
       canonical.map((vehicle) => [vehicle.chassis_no, branchIdByCode.get(vehicle.branch_code) ?? null]),
     );
+    const sourceRowIdByChassis = new Map(
+      canonical.map((vehicle) => [vehicle.chassis_no, vehicle.source_row_id ?? null]),
+    );
     const vehiclePayload = this.buildPublishVehicleRows(canonical, branchIdByCode);
     const qualityIssuePayload = this.buildPublishQualityIssueRows(
       [...previewIssues, ...issues],
       branchIdByChassis,
+      sourceRowIdByChassis,
     );
 
     const { data: datasetVersionId, error: publishError } = await client
@@ -1586,47 +1599,32 @@ export class SupabasePlatformRepository implements PlatformRepository {
       return this.buildExplorerMappings(companyId);
     }
 
+    await this.validateExplorerMappingChanges(companyId, branchChanges, paymentChanges);
     const client = this.supabase.getAdminClient();
-
-    if (branchChanges.length > 0) {
-      const payload = branchChanges.map((change) => ({
-        company_id: companyId,
-        raw_value: change.rawValue.trim(),
-        branch_id: change.branchId,
-        approved: change.approved ?? true,
-      }));
-      const { error } = await client
-        .schema("app")
-        .from("explorer_branch_mappings")
-        .upsert(payload, { onConflict: "company_id,raw_value" });
-      if (error) {
-        throw new InternalServerErrorException(error.message);
-      }
-
-      for (const change of branchChanges) {
-        await this.backfillBranchMapping(companyId, change.rawValue.trim(), change.branchId);
-      }
+    const { data: applyResult, error } = await client
+      .schema("app")
+      .rpc("apply_explorer_mappings", {
+        p_company_id: companyId,
+        p_branch_changes: branchChanges.map((change) => ({
+          raw_value: change.rawValue.trim(),
+          branch_id: change.branchId,
+          approved: change.approved ?? true,
+        })),
+        p_payment_changes: paymentChanges.map((change) => ({
+          raw_value: change.rawValue.trim(),
+          canonical_value: change.canonicalValue.trim(),
+          approved: change.approved ?? true,
+        })),
+      });
+    if (error) {
+      throw new InternalServerErrorException(error.message);
     }
-
-    if (paymentChanges.length > 0) {
-      const payload = paymentChanges.map((change) => ({
-        company_id: companyId,
-        raw_value: change.rawValue.trim(),
-        canonical_value: change.canonicalValue.trim(),
-        approved: change.approved ?? true,
-      }));
-      const { error } = await client
-        .schema("app")
-        .from("explorer_payment_mappings")
-        .upsert(payload, { onConflict: "company_id,raw_value" });
-      if (error) {
-        throw new InternalServerErrorException(error.message);
-      }
-
-      for (const change of paymentChanges) {
-        await this.backfillPaymentMapping(companyId, change.rawValue.trim(), change.canonicalValue.trim());
-      }
-    }
+    const summary = (applyResult ?? {}) as {
+      branch_rows_updated?: number;
+      payment_rows_updated?: number;
+      vehicle_rows_updated?: number;
+      quality_rows_updated?: number;
+    };
 
     await this.addAuditEvent({
       action: "explorer_mappings_updated",
@@ -1634,8 +1632,9 @@ export class SupabasePlatformRepository implements PlatformRepository {
       entityId: companyId,
       userId: user.id,
       userName: user.name,
-      details: `Updated ${branchChanges.length} branch and ${paymentChanges.length} payment mappings`,
+      details: `Updated ${branchChanges.length} branch and ${paymentChanges.length} payment mappings; backfilled ${summary.branch_rows_updated ?? 0} branch rows, ${summary.payment_rows_updated ?? 0} payment rows, ${summary.vehicle_rows_updated ?? 0} vehicle rows, and ${summary.quality_rows_updated ?? 0} quality rows`,
     });
+    await this.triggerAlertEvaluation(user, companyId, "explorer_mappings_updated");
 
     return this.buildExplorerMappings(companyId);
   }
@@ -1875,14 +1874,26 @@ export class SupabasePlatformRepository implements PlatformRepository {
       }
     }
 
-    await this.addAuditEvent({
-      action: "vehicle_corrections_updated",
-      entity: "vehicle_record_correction",
-      entityId: chassisNo,
+    await this.refreshNegativeQualityIssuesForVehicle(
+      companyId,
+      baseRow
+        ? {
+            datasetVersionId: baseRow.dataset_version_id,
+            importJobId: baseRow.import_job_id,
+            sourceRowId: baseRow.source_row_id,
+          }
+        : null,
+      effectiveVehicle,
+    );
+
+    await this.addAuditEvent(buildVehicleCorrectionAuditEvent({
+      chassisNo,
+      fields: changedFields,
+      reason: input.reason,
       userId: user.id,
       userName: user.name,
-      details: `Updated ${changedFields.map((field) => VEHICLE_CORRECTION_FIELD_LABELS[field]).join(", ")} for ${chassisNo}. Reason: ${input.reason.trim()}`,
-    });
+    }));
+    await this.triggerAlertEvaluation(user, companyId, "vehicle_corrections_updated");
 
     return this.getVehicle(user, chassisNo);
   }
@@ -2877,6 +2888,7 @@ export class SupabasePlatformRepository implements PlatformRepository {
   ): PublishVehicleRow[] {
     return canonical.map((vehicle) => ({
       branch_id: branchIdByCode.get(vehicle.branch_code) ?? null,
+      source_row_id: vehicle.source_row_id ?? null,
       chassis_no: vehicle.chassis_no,
       model: vehicle.model,
       payment_method: vehicle.payment_method,
@@ -2906,9 +2918,11 @@ export class SupabasePlatformRepository implements PlatformRepository {
   private buildPublishQualityIssueRows(
     issues: DataQualityIssue[],
     branchIdByChassis: Map<string, string | null>,
+    sourceRowIdByChassis: Map<string, string | null>,
   ): PublishQualityIssueRow[] {
     return issues.map((issue) => ({
       branch_id: branchIdByChassis.get(issue.chassisNo) ?? null,
+      source_row_id: sourceRowIdByChassis.get(issue.chassisNo) ?? null,
       chassis_no: issue.chassisNo || null,
       field: issue.field,
       issue_type: issue.issueType,
@@ -3034,7 +3048,7 @@ export class SupabasePlatformRepository implements PlatformRepository {
 
   private async fetchVisibleWorkbookRows(user: User) {
     const companyId = this.requireCompanyId(user);
-    const rows = await this.fetchWorkbookRows(companyId);
+    const rows = await this.fetchNormalizedWorkbookRows(companyId);
     const correctionsByChassis = await this.fetchVehicleCorrections(
       companyId,
       rows.map((row) => row.chassis_no),
@@ -3078,7 +3092,7 @@ export class SupabasePlatformRepository implements PlatformRepository {
     let query = client
       .schema("mart")
       .from("vehicle_aging")
-      .select("id, company_id, branch_id, branch_code, import_job_id, source_row_id, chassis_no, bg_date, shipment_etd_pkg, shipment_eta, date_received_by_outlet, reg_date, delivery_date, disb_date, model, payment_method, salesman_name, customer_name, is_d2d, bg_to_delivery, bg_to_shipment_etd, etd_to_outlet_received, outlet_received_to_reg, reg_to_delivery, etd_to_eta, eta_to_outlet_received, outlet_received_to_delivery, bg_to_disb, delivery_to_disb")
+      .select("id, company_id, branch_id, branch_code, dataset_version_id, import_job_id, source_row_id, chassis_no, bg_date, shipment_etd_pkg, shipment_eta, date_received_by_outlet, reg_date, delivery_date, disb_date, model, payment_method, salesman_name, customer_name, is_d2d, bg_to_delivery, bg_to_shipment_etd, etd_to_outlet_received, outlet_received_to_reg, reg_to_delivery, etd_to_eta, eta_to_outlet_received, outlet_received_to_delivery, bg_to_disb, delivery_to_disb")
       .eq("company_id", companyId);
 
     const visibleBranchId = user.branchId ?? null;
@@ -3109,6 +3123,15 @@ export class SupabasePlatformRepository implements PlatformRepository {
     }
 
     return ((data ?? []) as RawImportRow[]).map((row) => this.mapRawImportRow(row));
+  }
+
+  private async fetchNormalizedWorkbookRows(companyId: string) {
+    const [rows, approvedMappings] = await Promise.all([
+      this.fetchWorkbookRows(companyId),
+      this.fetchApprovedExplorerMappings(companyId),
+    ]);
+
+    return applyApprovedExplorerMappings(rows, approvedMappings);
   }
 
   private async fetchVehicleCorrections(companyId: string, chassisNos: string[]) {
@@ -3288,6 +3311,33 @@ export class SupabasePlatformRepository implements PlatformRepository {
     return (data ?? []) as ExplorerPaymentMappingRow[];
   }
 
+  private async fetchApprovedExplorerMappings(companyId: string) {
+    const [branches, branchMappings, paymentMappings] = await Promise.all([
+      this.fetchCompanyBranches(companyId),
+      this.fetchExplorerBranchMappings(companyId),
+      this.fetchExplorerPaymentMappings(companyId),
+    ]);
+
+    const branchCodeById = new Map(branches.map((branch) => [branch.id, branch.code]));
+
+    return {
+      branches: branchMappings
+        .filter((mapping) => mapping.approved)
+        .map((mapping) => ({
+          rawValue: mapping.raw_value,
+          normalizedValue: branchCodeById.get(mapping.branch_id) ?? mapping.raw_value,
+          approved: mapping.approved,
+        })),
+      payments: paymentMappings
+        .filter((mapping) => mapping.approved)
+        .map((mapping) => ({
+          rawValue: mapping.raw_value,
+          normalizedValue: mapping.canonical_value,
+          approved: mapping.approved,
+        })),
+    };
+  }
+
   private buildExplorerPaymentOptions(rawRows: VehicleRaw[], paymentMappings: ExplorerPaymentMappingRow[]) {
     const values = new Set<string>();
     for (const row of rawRows) {
@@ -3336,6 +3386,44 @@ export class SupabasePlatformRepository implements PlatformRepository {
       .filter(Boolean)
       .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
       .join(" ");
+  }
+
+  private async validateExplorerMappingChanges(
+    companyId: string,
+    branchChanges: NonNullable<UpdateExplorerMappingsRequest["branches"]>,
+    paymentChanges: NonNullable<UpdateExplorerMappingsRequest["payments"]>,
+  ) {
+    const branchIds = new Set((await this.fetchCompanyBranches(companyId)).map((branch) => branch.id));
+    const seenBranchRawValues = new Set<string>();
+    const seenPaymentRawValues = new Set<string>();
+
+    for (const change of branchChanges) {
+      const rawValue = change.rawValue.trim();
+      if (!rawValue) {
+        throw new BadRequestException("Branch mapping values cannot be blank");
+      }
+      const normalizedRawValue = rawValue.toLowerCase();
+      if (seenBranchRawValues.has(normalizedRawValue)) {
+        throw new BadRequestException(`Branch mapping ${rawValue} was provided more than once`);
+      }
+      seenBranchRawValues.add(normalizedRawValue);
+      if (!branchIds.has(change.branchId)) {
+        throw new BadRequestException(`Branch ${change.branchId} was not found`);
+      }
+    }
+
+    for (const change of paymentChanges) {
+      const rawValue = change.rawValue.trim();
+      const canonicalValue = change.canonicalValue.trim();
+      if (!rawValue || !canonicalValue) {
+        throw new BadRequestException("Payment mapping values cannot be blank");
+      }
+      const normalizedRawValue = rawValue.toLowerCase();
+      if (seenPaymentRawValues.has(normalizedRawValue)) {
+        throw new BadRequestException(`Payment mapping ${rawValue} was provided more than once`);
+      }
+      seenPaymentRawValues.add(normalizedRawValue);
+    }
   }
 
   private async backfillBranchMapping(companyId: string, rawValue: string, branchId: string) {
@@ -3486,8 +3574,10 @@ export class SupabasePlatformRepository implements PlatformRepository {
   private mapRawImportRow(row: RawImportRow): VehicleRaw {
     const payload = row.raw_payload ?? ({} as VehicleRaw);
     return {
-      id: payload.id ?? row.id,
-      import_batch_id: payload.import_batch_id ?? row.import_job_id,
+      // Persisted raw rows must preserve the database UUID so downstream publish
+      // can safely reference source_row_id in canonical and quality records.
+      id: row.id,
+      import_batch_id: row.import_job_id,
       row_number: payload.row_number ?? row.source_row_number,
       chassis_no: payload.chassis_no ?? row.chassis_no,
       bg_date: payload.bg_date ?? row.bg_date ?? undefined,
@@ -3763,6 +3853,67 @@ export class SupabasePlatformRepository implements PlatformRepository {
     }
   }
 
+  private async refreshNegativeQualityIssuesForVehicle(
+    companyId: string,
+    baseRecord: { datasetVersionId: string | null; importJobId: string; sourceRowId: string | null } | null,
+    vehicle: VehicleCanonical,
+  ) {
+    const client = this.supabase.getAdminClient();
+    const branchIdByCode = await this.fetchBranchIdByCode(companyId);
+    const branchId = vehicle.branch_code ? (branchIdByCode.get(vehicle.branch_code) ?? null) : null;
+    const { error: branchUpdateError } = await client
+      .schema("app")
+      .from("quality_issues")
+      .update({ branch_id: branchId })
+      .eq("company_id", companyId)
+      .eq("chassis_no", vehicle.chassis_no);
+
+    if (branchUpdateError) {
+      throw new InternalServerErrorException(branchUpdateError.message);
+    }
+
+    const { error: deleteError } = await client
+      .schema("app")
+      .from("quality_issues")
+      .delete()
+      .eq("company_id", companyId)
+      .eq("chassis_no", vehicle.chassis_no)
+      .eq("issue_type", "negative");
+
+    if (deleteError) {
+      throw new InternalServerErrorException(deleteError.message);
+    }
+
+    if (!baseRecord) {
+      return;
+    }
+
+    const negativeIssues = buildVehicleNegativeQualityIssues(vehicle);
+    if (negativeIssues.length === 0) {
+      return;
+    }
+
+    const payload = negativeIssues.map((issue) => ({
+      company_id: companyId,
+      branch_id: branchId,
+      import_job_id: baseRecord.importJobId,
+      dataset_version_id: baseRecord.datasetVersionId,
+      source_row_id: baseRecord.sourceRowId,
+      chassis_no: issue.chassisNo,
+      field: issue.field,
+      issue_type: issue.issueType,
+      message: issue.message,
+      severity: issue.severity,
+    }));
+
+    for (const chunk of chunkArray(payload, 100)) {
+      const { error } = await client.schema("app").from("quality_issues").insert(chunk);
+      if (error) {
+        throw new InternalServerErrorException(error.message);
+      }
+    }
+  }
+
   private async createNotification(input: {
     companyId: string;
     userId: string;
@@ -3948,10 +4099,6 @@ function buildExportSubscriptionFingerprint(query: ExplorerQuery) {
 
 function canViewCompanyWideExports(user: User) {
   return ["super_admin", "company_admin", "director"].includes(user.role);
-}
-
-function canManageVehicleCorrections(user: User) {
-  return VEHICLE_EXPLORER_EDIT_ROLES.includes(user.role);
 }
 
 function canManageExplorerMappings(user: User) {

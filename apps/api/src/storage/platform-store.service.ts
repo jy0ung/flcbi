@@ -1,7 +1,11 @@
 import { BadRequestException, ForbiddenException, Inject, Injectable, NotFoundException } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
 import {
+  applyApprovedExplorerMappings,
   applyVehicleCorrections,
+  buildVehicleCorrectionAuditEvent,
+  buildVehicleNegativeQualityIssues,
+  canManageVehicleCorrections,
   type AppRole,
   buildAgingSummary,
   buildVehicleExplorerExportRows,
@@ -24,7 +28,6 @@ import {
   publishCanonical,
   queryVehicles,
   parseWorkbook,
-  VEHICLE_EXPLORER_EDIT_ROLES,
   type AgingSummary,
   type AlertRule,
   type AuditEvent,
@@ -344,12 +347,12 @@ export class PlatformStoreService implements PlatformRepository {
   }
 
   async createImportPreview(user: User, fileName: string, fileBuffer: Buffer) {
-      const parsed = await parseWorkbook(
-        fileBuffer.buffer.slice(
-          fileBuffer.byteOffset,
-          fileBuffer.byteOffset + fileBuffer.byteLength,
-        ),
-      );
+    const parsed = await parseWorkbook(
+      fileBuffer.buffer.slice(
+        fileBuffer.byteOffset,
+        fileBuffer.byteOffset + fileBuffer.byteLength,
+      ),
+    );
     const id = `batch-${Date.now()}`;
     const storageKey = `imports/${id}/${fileName}`;
     await this.objectStorage.putObject(storageKey, fileBuffer);
@@ -384,9 +387,11 @@ export class PlatformStoreService implements PlatformRepository {
       throw new NotFoundException(`Import ${id} not found`);
     }
 
-    const { canonical, issues } = publishCanonical(
+    const normalizedRows = this.applyApprovedMappingsToRows(
+      user.companyId,
       preview.rows.map((row) => ({ ...row, import_batch_id: id })),
     );
+    const { canonical, issues } = publishCanonical(normalizedRows);
     if (canonical.length === 0) {
       throw new BadRequestException("No canonical vehicle rows were produced from this import");
     }
@@ -714,6 +719,8 @@ export class PlatformStoreService implements PlatformRepository {
       return this.buildExplorerMappings(user.companyId);
     }
 
+    this.validateExplorerMappingChanges(user.companyId, branchChanges, paymentChanges);
+
     if (branchChanges.length > 0) {
       const records = this.explorerBranchMappingsByCompany.get(user.companyId) ?? [];
       for (const change of branchChanges) {
@@ -762,6 +769,7 @@ export class PlatformStoreService implements PlatformRepository {
       userName: user.name,
       details: `Updated ${branchChanges.length} branch and ${paymentChanges.length} payment mappings`,
     });
+    this.syncAlertNotifications(user);
 
     return this.buildExplorerMappings(user.companyId);
   }
@@ -897,6 +905,48 @@ export class PlatformStoreService implements PlatformRepository {
     return titleCase || undefined;
   }
 
+  private validateExplorerMappingChanges(
+    companyId: string,
+    branchChanges: NonNullable<UpdateExplorerMappingsRequest["branches"]>,
+    paymentChanges: NonNullable<UpdateExplorerMappingsRequest["payments"]>,
+  ) {
+    const branchIds = new Set(
+      this.branches
+        .filter((branch) => branch.companyId === companyId)
+        .map((branch) => branch.id),
+    );
+    const seenBranchRawValues = new Set<string>();
+    const seenPaymentRawValues = new Set<string>();
+
+    for (const change of branchChanges) {
+      const rawValue = change.rawValue.trim();
+      if (!rawValue) {
+        throw new BadRequestException("Branch mapping values cannot be blank");
+      }
+      const normalizedRawValue = rawValue.toLowerCase();
+      if (seenBranchRawValues.has(normalizedRawValue)) {
+        throw new BadRequestException(`Branch mapping ${rawValue} was provided more than once`);
+      }
+      seenBranchRawValues.add(normalizedRawValue);
+      if (!branchIds.has(change.branchId)) {
+        throw new BadRequestException(`Branch ${change.branchId} not found`);
+      }
+    }
+
+    for (const change of paymentChanges) {
+      const rawValue = change.rawValue.trim();
+      const canonicalValue = change.canonicalValue.trim();
+      if (!rawValue || !canonicalValue) {
+        throw new BadRequestException("Payment mapping values cannot be blank");
+      }
+      const normalizedRawValue = rawValue.toLowerCase();
+      if (seenPaymentRawValues.has(normalizedRawValue)) {
+        throw new BadRequestException(`Payment mapping ${rawValue} was provided more than once`);
+      }
+      seenPaymentRawValues.add(normalizedRawValue);
+    }
+  }
+
   private backfillBranchMapping(companyId: string, rawValue: string, branchId: string) {
     const branch = this.branches.find((candidate) => candidate.id === branchId && candidate.companyId === companyId);
     if (!branch) {
@@ -919,6 +969,39 @@ export class PlatformStoreService implements PlatformRepository {
         vehicle.payment_method = normalizedCanonical;
       }
     }
+  }
+
+  private applyApprovedMappingsToRows(companyId: string, rows: VehicleRaw[]) {
+    const branchMappings = this.explorerBranchMappingsByCompany.get(companyId) ?? [];
+    const paymentMappings = this.explorerPaymentMappingsByCompany.get(companyId) ?? [];
+    const branchCodeById = new Map(
+      this.branches
+        .filter((branch) => branch.companyId === companyId)
+        .map((branch) => [branch.id, branch.code]),
+    );
+
+    return applyApprovedExplorerMappings(rows, {
+      branches: branchMappings.map((mapping) => ({
+        rawValue: mapping.rawValue,
+        normalizedValue: branchCodeById.get(mapping.branchId) ?? mapping.rawValue,
+        approved: mapping.approved,
+      })),
+      payments: paymentMappings.map((mapping) => ({
+        rawValue: mapping.rawValue,
+        normalizedValue: mapping.canonicalValue,
+        approved: mapping.approved,
+      })),
+    });
+  }
+
+  private refreshNegativeQualityIssuesForVehicle(importBatchId: string, vehicle: VehicleCanonical) {
+    this.qualityIssues = this.qualityIssues.filter((issue) => !(
+      issue.chassisNo === vehicle.chassis_no && issue.issueType === "negative"
+    ));
+    this.qualityIssues.unshift(...buildVehicleNegativeQualityIssues(vehicle).map((issue) => ({
+      ...issue,
+      importBatchId,
+    })));
   }
 
   listSlas(user: User) {
@@ -1047,14 +1130,15 @@ export class PlatformStoreService implements PlatformRepository {
     }
 
     this.lastRefresh = new Date().toISOString();
-    this.addAuditEvent({
-      action: "vehicle_corrections_updated",
-      entity: "vehicle_record_correction",
-      entityId: chassisNo,
+    this.refreshNegativeQualityIssuesForVehicle(baseVehicle.import_batch_id, effectiveVehicle);
+    this.addAuditEvent(buildVehicleCorrectionAuditEvent({
+      chassisNo,
+      fields: changedFields,
+      reason: input.reason,
       userId: user.id,
       userName: user.name,
-      details: `Updated ${changedFields.map((field) => VEHICLE_CORRECTION_FIELD_LABELS[field]).join(", ")} for ${chassisNo}. Reason: ${input.reason.trim()}`,
-    });
+    }));
+    this.syncAlertNotifications(user);
 
     return this.getVehicle(user, chassisNo);
   }
@@ -1114,7 +1198,10 @@ export class PlatformStoreService implements PlatformRepository {
   }
 
   private getVisibleWorkbookRows(user: User): WorkbookExplorerRow[] {
-    const previewRows = this.imports.flatMap((item) => this.importPreviews.get(item.id)?.rows ?? []);
+    const previewRows = this.applyApprovedMappingsToRows(
+      user.companyId,
+      this.imports.flatMap((item) => this.importPreviews.get(item.id)?.rows ?? []),
+    );
     const correctionsByChassis = new Map<string, VehicleCorrection[]>();
     for (const row of previewRows) {
       correctionsByChassis.set(row.chassis_no, this.listVehicleCorrections(user.companyId, row.chassis_no));
@@ -1313,10 +1400,6 @@ function buildExportSubscriptionFingerprint(query: ExplorerQuery) {
 
 function canViewCompanyWideExports(user: User) {
   return ["super_admin", "company_admin", "director"].includes(user.role);
-}
-
-function canManageVehicleCorrections(user: User) {
-  return VEHICLE_EXPLORER_EDIT_ROLES.includes(user.role);
 }
 
 function canManageExplorerMappings(user: User) {

@@ -1,6 +1,6 @@
 import React from "react";
 import {
-  VEHICLE_EXPLORER_EDIT_ROLES,
+  canManageVehicleCorrections,
   type ExplorerMappingsResponse,
   type ExplorerQuery,
   type UpdateVehicleCorrectionsRequest,
@@ -728,8 +728,8 @@ export function VehicleExplorerGrid({
   onSaveCorrections,
   savingCorrections,
 }: VehicleExplorerGridProps) {
-  const { hasRole, isAuthenticated } = useAuth();
-  const canEditCorrections = isAuthenticated && hasRole(VEHICLE_EXPLORER_EDIT_ROLES);
+  const { user, isAuthenticated } = useAuth();
+  const canEditCorrections = isAuthenticated && canManageVehicleCorrections(user);
   const [editingCell, setEditingCell] = React.useState<EditingCell | null>(null);
   const [draftValue, setDraftValue] = React.useState("");
   const [reason, setReason] = React.useState("");

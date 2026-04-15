@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import XLSX from "xlsx";
-import { parseWorkbook, publishCanonical } from "./imports.js";
+import {
+  applyApprovedExplorerMappings,
+  buildVehicleNegativeQualityIssues,
+  parseWorkbook,
+  publishCanonical,
+} from "./imports.js";
 
 function createWorkbookBuffer(rows: unknown[][]) {
   const workbook = XLSX.utils.book_new();
@@ -106,5 +111,69 @@ describe("publishCanonical", () => {
         }),
       ]),
     );
+  });
+});
+
+describe("applyApprovedExplorerMappings", () => {
+  it("normalizes branch and payment values using approved mappings only", () => {
+    const [row] = applyApprovedExplorerMappings([
+      {
+        id: "row-1",
+        import_batch_id: "import-1",
+        row_number: 1,
+        chassis_no: "PMK123456A",
+        branch_code: "flagship",
+        payment_method: "loan hire",
+      },
+    ], {
+      branches: [
+        { rawValue: "flagship", normalizedValue: "KK", approved: true },
+        { rawValue: "other", normalizedValue: "MYY", approved: false },
+      ],
+      payments: [
+        { rawValue: "loan hire", normalizedValue: "Loan", approved: true },
+      ],
+    });
+
+    expect(row?.branch_code).toBe("KK");
+    expect(row?.payment_method).toBe("Loan");
+  });
+});
+
+describe("buildVehicleNegativeQualityIssues", () => {
+  it("creates correction-friendly negative KPI issues from one vehicle", () => {
+    const issues = buildVehicleNegativeQualityIssues({
+      id: "vehicle-1",
+      chassis_no: "PMKNEG2",
+      branch_code: "KK",
+      model: "ATIVA",
+      payment_method: "Loan",
+      salesman_name: "Alice",
+      customer_name: "Alpha",
+      is_d2d: false,
+      import_batch_id: "import-1",
+      source_row_id: "row-1",
+      bg_date: "2025-04-10",
+      delivery_date: "2025-04-05",
+      bg_to_delivery: -5,
+      bg_to_shipment_etd: null,
+      etd_to_outlet_received: null,
+      outlet_received_to_reg: null,
+      reg_to_delivery: null,
+      etd_to_eta: null,
+      eta_to_outlet_received: null,
+      outlet_received_to_delivery: null,
+      bg_to_disb: null,
+      delivery_to_disb: null,
+    });
+
+    expect(issues).toEqual([
+      expect.objectContaining({
+        chassisNo: "PMKNEG2",
+        field: "bg_to_delivery",
+        issueType: "negative",
+        severity: "error",
+      }),
+    ]);
   });
 });

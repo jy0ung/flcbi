@@ -1,7 +1,7 @@
 import { Body, Controller, Get, Inject, Param, Patch, Post, Query } from "@nestjs/common";
 import { ApiBearerAuth, ApiTags } from "@nestjs/swagger";
 import {
-  VEHICLE_EXPLORER_EDIT_ROLES,
+  VEHICLE_CORRECTION_EDITOR_ROLES,
   type AgingSummaryResponse,
   type ExplorerMappingsResponse,
   type ExplorerQueryResponse,
@@ -47,7 +47,7 @@ export class AgingController {
     return await this.store.getVehicle(user, chassisNo);
   }
 
-  @Roles(...VEHICLE_EXPLORER_EDIT_ROLES)
+  @Roles(...VEHICLE_CORRECTION_EDITOR_ROLES)
   @Patch("vehicles/:chassisNo/corrections")
   async updateVehicleCorrections(
     @CurrentUser() user: User,

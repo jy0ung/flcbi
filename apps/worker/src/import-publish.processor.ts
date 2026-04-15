@@ -4,6 +4,7 @@ import {
   ALERT_EVALUATION_JOB_NAME,
   ALERT_QUEUE_NAME,
   IMPORT_PUBLISH_JOB_NAME,
+  applyApprovedExplorerMappings,
   publishCanonical,
   type AlertEvaluationJobPayload,
   type DataQualityIssue,
@@ -91,15 +92,21 @@ export async function processImportPublishJob(job: Job<ImportPublishJobPayload>)
     }
 
     const branchIdByCode = await fetchBranchIdByCode(client, importJob.company_id);
-    const { canonical, issues } = publishCanonical(
+    const approvedMappings = await fetchApprovedExplorerMappings(client, importJob.company_id);
+    const normalizedPreviewRows = applyApprovedExplorerMappings(
       previewRows.map((row) => ({ ...row, import_batch_id: importJob.id })),
+      approvedMappings,
     );
+    const { canonical, issues } = publishCanonical(normalizedPreviewRows);
     if (canonical.length === 0) {
       throw new Error("No canonical vehicle rows were produced from this import");
     }
 
     const branchIdByChassis = new Map(
       canonical.map((vehicle) => [vehicle.chassis_no, branchIdByCode.get(vehicle.branch_code) ?? null]),
+    );
+    const sourceRowIdByChassis = new Map(
+      canonical.map((vehicle) => [vehicle.chassis_no, vehicle.source_row_id ?? null]),
     );
     const publishedAt = new Date().toISOString();
     const { data: datasetVersionId, error } = await client
@@ -111,7 +118,7 @@ export async function processImportPublishJob(job: Job<ImportPublishJobPayload>)
         p_published_at: publishedAt,
         p_publish_mode: job.data.publishMode,
         p_vehicle_rows: buildPublishVehicleRows(canonical, branchIdByCode),
-        p_quality_issues: buildPublishQualityIssueRows([...previewIssues, ...issues], branchIdByChassis),
+        p_quality_issues: buildPublishQualityIssueRows([...previewIssues, ...issues], branchIdByChassis, sourceRowIdByChassis),
       });
 
     if (error || !datasetVersionId) {
@@ -256,6 +263,48 @@ async function fetchBranchIdByCode(client: SupabaseClient, companyId: string) {
   );
 }
 
+async function fetchApprovedExplorerMappings(client: SupabaseClient, companyId: string) {
+  const [{ data: branches }, { data: branchMappings }, { data: paymentMappings }] = await Promise.all([
+    client
+      .schema("app")
+      .from("branches")
+      .select("id, code")
+      .eq("company_id", companyId)
+      .throwOnError(),
+    client
+      .schema("app")
+      .from("explorer_branch_mappings")
+      .select("raw_value, branch_id, approved")
+      .eq("company_id", companyId)
+      .eq("approved", true)
+      .throwOnError(),
+    client
+      .schema("app")
+      .from("explorer_payment_mappings")
+      .select("raw_value, canonical_value, approved")
+      .eq("company_id", companyId)
+      .eq("approved", true)
+      .throwOnError(),
+  ]);
+
+  const branchCodeById = new Map(
+    ((branches ?? []) as Array<{ id: string; code: string }>).map((row) => [row.id, row.code]),
+  );
+
+  return {
+    branches: ((branchMappings ?? []) as Array<{ raw_value: string; branch_id: string; approved: boolean }>).map((row) => ({
+      rawValue: row.raw_value,
+      normalizedValue: branchCodeById.get(row.branch_id) ?? row.raw_value,
+      approved: row.approved,
+    })),
+    payments: ((paymentMappings ?? []) as Array<{ raw_value: string; canonical_value: string; approved: boolean }>).map((row) => ({
+      rawValue: row.raw_value,
+      normalizedValue: row.canonical_value,
+      approved: row.approved,
+    })),
+  };
+}
+
 async function fetchPersistedIssues(client: SupabaseClient, companyId: string, importId: string) {
   const { data } = await client
     .schema("app")
@@ -293,8 +342,10 @@ async function fetchPersistedRawRows(client: SupabaseClient, companyId: string, 
 function mapRawImportRow(row: RawImportRow): VehicleRaw {
   const payload = row.raw_payload ?? {};
   return {
-    id: payload.id ?? row.id,
-    import_batch_id: payload.import_batch_id ?? row.import_job_id,
+    // Persisted raw rows must preserve the database UUID so downstream publish
+    // can safely reference source_row_id in canonical and quality records.
+    id: row.id,
+    import_batch_id: row.import_job_id,
     row_number: payload.row_number ?? row.source_row_number,
     chassis_no: payload.chassis_no ?? row.chassis_no,
     bg_date: payload.bg_date ?? row.bg_date ?? undefined,
@@ -332,6 +383,7 @@ function buildPublishVehicleRows(
 ) {
   return canonical.map((vehicle) => ({
     branch_id: branchIdByCode.get(vehicle.branch_code) ?? null,
+    source_row_id: vehicle.source_row_id ?? null,
     chassis_no: vehicle.chassis_no,
     model: vehicle.model,
     payment_method: vehicle.payment_method,
@@ -361,9 +413,11 @@ function buildPublishVehicleRows(
 function buildPublishQualityIssueRows(
   issues: DataQualityIssue[],
   branchIdByChassis: Map<string, string | null>,
+  sourceRowIdByChassis: Map<string, string | null>,
 ) {
   return issues.map((issue) => ({
     branch_id: branchIdByChassis.get(issue.chassisNo) ?? null,
+    source_row_id: sourceRowIdByChassis.get(issue.chassisNo) ?? null,
     chassis_no: issue.chassisNo || null,
     field: issue.field,
     issue_type: issue.issueType,

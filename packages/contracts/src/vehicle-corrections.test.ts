@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { applyVehicleCorrections } from "./vehicle-corrections.js";
-import type { VehicleCanonical } from "./domain.js";
+import {
+  applyVehicleCorrections,
+  buildVehicleCorrectionAuditEvent,
+  canManageVehicleCorrections,
+} from "./vehicle-corrections.js";
+import type { AppRole, VehicleCanonical } from "./domain.js";
 
 const baseVehicle: VehicleCanonical = {
   id: "vehicle-1",
@@ -72,5 +76,47 @@ describe("applyVehicleCorrections", () => {
     expect(corrected.reg_date).toBeUndefined();
     expect(corrected.outlet_received_to_reg).toBeNull();
     expect(corrected.reg_to_delivery).toBeNull();
+  });
+});
+
+describe("vehicle correction policy", () => {
+  it("limits editor access to aging write roles", () => {
+    const editableRoles: AppRole[] = [
+      "super_admin",
+      "company_admin",
+      "director",
+      "general_manager",
+      "manager",
+    ];
+    const readOnlyRoles: AppRole[] = [
+      "sales",
+      "accounts",
+      "analyst",
+    ];
+
+    for (const role of editableRoles) {
+      expect(canManageVehicleCorrections(role)).toBe(true);
+    }
+
+    for (const role of readOnlyRoles) {
+      expect(canManageVehicleCorrections(role)).toBe(false);
+    }
+  });
+
+  it("builds a consistent audit event payload", () => {
+    expect(buildVehicleCorrectionAuditEvent({
+      chassisNo: "PMK123456A",
+      fields: ["branch_code", "payment_method"],
+      reason: "  Correct mapped outlet and payment  ",
+      userId: "user-1",
+      userName: "Ops Manager",
+    })).toEqual({
+      action: "vehicle_corrections_updated",
+      entity: "vehicle_record_correction",
+      entityId: "PMK123456A",
+      userId: "user-1",
+      userName: "Ops Manager",
+      details: "Updated Branch, Payment Method for PMK123456A. Reason: Correct mapped outlet and payment",
+    });
   });
 });
