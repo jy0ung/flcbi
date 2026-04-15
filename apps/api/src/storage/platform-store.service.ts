@@ -24,7 +24,7 @@ import {
   publishCanonical,
   queryVehicles,
   parseWorkbook,
-  VEHICLE_CORRECTION_EDITOR_ROLES,
+  VEHICLE_EXPLORER_EDIT_ROLES,
   type AgingSummary,
   type AlertRule,
   type AuditEvent,
@@ -965,10 +965,16 @@ export class PlatformStoreService implements PlatformRepository {
   }
 
   getVehicle(user: User, chassisNo: string) {
-    const vehicle = this.maskVehicle(
+    let vehicle = this.maskVehicle(
       this.getVisibleVehicles(user).find((item) => item.chassis_no === chassisNo),
       user,
     );
+    if (!vehicle) {
+      const workbookRow = this.getVisibleWorkbookRows(user).find((item) => item.chassis_no === chassisNo);
+      if (workbookRow) {
+        vehicle = workbookRow;
+      }
+    }
     if (!vehicle) {
       throw new NotFoundException(`Vehicle ${chassisNo} not found`);
     }
@@ -984,7 +990,20 @@ export class PlatformStoreService implements PlatformRepository {
       throw new ForbiddenException("You do not have permission to edit vehicle corrections");
     }
 
-    const baseVehicle = this.vehicles.find((item) => item.chassis_no === chassisNo);
+    const previewRows = this.imports.flatMap((item) => this.importPreviews.get(item.id)?.rows ?? []);
+    const rawWorkbookRow = previewRows.find((item) => {
+      if (item.chassis_no !== chassisNo) {
+        return false;
+      }
+      if (user.role === "super_admin" || user.role === "company_admin" || user.role === "director" || user.role === "analyst") {
+        return true;
+      }
+      if (user.branchId) {
+        return (item.branch_code ?? "UNKNOWN") === user.branchId;
+      }
+      return true;
+    });
+    const baseVehicle = this.vehicles.find((item) => item.chassis_no === chassisNo) ?? (rawWorkbookRow ? this.mapWorkbookRow(rawWorkbookRow) : undefined);
     if (!baseVehicle || !baseVehicle.import_batch_id) {
       throw new NotFoundException(`Vehicle ${chassisNo} not found`);
     }
@@ -1096,7 +1115,6 @@ export class PlatformStoreService implements PlatformRepository {
 
   private getVisibleWorkbookRows(user: User): WorkbookExplorerRow[] {
     const previewRows = this.imports.flatMap((item) => this.importPreviews.get(item.id)?.rows ?? []);
-    const editableChassisNos = new Set(this.vehicles.map((vehicle) => vehicle.chassis_no));
     const correctionsByChassis = new Map<string, VehicleCorrection[]>();
     for (const row of previewRows) {
       correctionsByChassis.set(row.chassis_no, this.listVehicleCorrections(user.companyId, row.chassis_no));
@@ -1107,7 +1125,7 @@ export class PlatformStoreService implements PlatformRepository {
         const workbookRow = this.mapWorkbookRow(row);
         return {
           ...(applyVehicleCorrections(workbookRow, correctionsByChassis.get(row.chassis_no) ?? []) as WorkbookExplorerRow),
-          canEditCorrections: editableChassisNos.has(workbookRow.chassis_no),
+          canEditCorrections: canManageVehicleCorrections(user),
         };
       })
       .filter((row) => {
@@ -1298,7 +1316,7 @@ function canViewCompanyWideExports(user: User) {
 }
 
 function canManageVehicleCorrections(user: User) {
-  return VEHICLE_CORRECTION_EDITOR_ROLES.includes(user.role);
+  return VEHICLE_EXPLORER_EDIT_ROLES.includes(user.role);
 }
 
 function canManageExplorerMappings(user: User) {

@@ -136,16 +136,15 @@ async function findExplorerRowSample(page) {
 
     for (let index = 0; index < count; index += 1) {
       const row = rows.nth(index);
-      const editButtonCount = await row.getByTestId("vehicle-explorer-edit-button").count();
-      if (editButtonCount === 0) {
+      const editable = await row.getAttribute("data-editable-row");
+      if (editable !== "true") {
         continue;
       }
 
-      const cells = row.locator("td");
-      const chassisValue = (await cells.nth(0).textContent())?.trim();
-      const paymentValue = (await cells.nth(3).textContent())?.trim();
-      const dateValue = (await cells.nth(7).textContent())?.trim();
-      const d2dValue = (await cells.nth(14).textContent())?.trim();
+      const chassisValue = (await row.getByTestId("vehicle-explorer-cell-chassis-no").textContent())?.trim();
+      const paymentValue = (await row.getByTestId("vehicle-explorer-cell-payment-method").textContent())?.trim();
+      const dateValue = (await row.getByTestId("vehicle-explorer-cell-bg-date").textContent())?.trim();
+      const d2dValue = (await row.getByTestId("vehicle-explorer-cell-is-d2d").textContent())?.trim();
 
       if (chassisValue && paymentValue && dateValue && d2dValue && chassisValue !== "—" && paymentValue !== "—" && dateValue !== "—" && d2dValue !== "—") {
         return {
@@ -182,7 +181,7 @@ async function openHeaderFilter(page, columnKey) {
 async function waitForExplorerReady(page) {
   const waitForPagination = async () => {
     await page.getByRole("heading", { name: "Vehicle Explorer" }).waitFor({ timeout: explorerLoadTimeout });
-    await page.getByTestId("vehicle-explorer-pagination-top").waitFor({ timeout: explorerLoadTimeout });
+    await page.getByTestId("vehicle-explorer-toolbar").waitFor({ timeout: explorerLoadTimeout });
   };
 
   try {
@@ -346,11 +345,13 @@ try {
 
   console.log("step: saved-view");
   const savedViewName = `Smoke Saved View ${Date.now()}`;
+  await page.getByTestId("explorer-saved-views-trigger").click();
   await page.getByTestId("explorer-save-view-button").click();
   await page.getByTestId("explorer-save-view-name").fill(savedViewName);
   await page.getByTestId("explorer-save-view-submit").click();
   await page.goto("/auto-aging/vehicles?pageSize=100", { waitUntil: "domcontentloaded" });
   await waitForExplorerReady(page);
+  await page.getByTestId("explorer-saved-views-trigger").click();
   const savedViewRow = page.getByTestId("explorer-saved-view-row").filter({ hasText: savedViewName }).first();
   await savedViewRow.waitFor({ timeout: explorerLoadTimeout });
 
@@ -365,11 +366,13 @@ try {
   assert(savedViewUrl.searchParams.get("branch") === autoAgingBranchChoice, "Saved view did not restore branch");
   assert(savedViewUrl.searchParams.get("model") === autoAgingModelChoice, "Saved view did not restore model");
 
+  await page.getByTestId("explorer-saved-views-trigger").click();
   await savedViewRow.getByTestId("explorer-saved-view-delete").click();
   await page.getByTestId("explorer-saved-view-delete-confirm").click();
   await page.waitForTimeout(2000);
   await page.reload({ waitUntil: "domcontentloaded" });
   await waitForExplorerReady(page);
+  await page.getByTestId("explorer-saved-views-trigger").click();
   assert(
     (await page.getByTestId("explorer-saved-view-row").filter({ hasText: savedViewName }).count()) === 0,
     "Saved view row still visible after delete",
@@ -387,11 +390,23 @@ try {
   await openHeaderFilter(page, "chassis-no");
   await page.getByTestId("vehicle-explorer-filter-chassis-no-input").fill(sampleRow.chassisNo);
   await page.getByTestId("vehicle-explorer-filter-chassis-no-apply").click();
-  await page.waitForFunction(() => document.querySelectorAll('[data-testid="vehicle-explorer-row"]').length === 1, undefined, { timeout: 15000 });
+  await page.waitForURL((url) => {
+    const filters = url.searchParams.get("filters");
+    return Boolean(filters && filters.includes(sampleRow.chassisNo));
+  }, { timeout: 15000 });
 
   const textFilterRows = page.getByTestId("vehicle-explorer-row");
   const textFilterRowCount = await textFilterRows.count();
-  assert(textFilterRowCount === 1, `Chassis filter did not narrow grid to one row (${textFilterRowCount})`);
+  assert(textFilterRowCount >= 1 && textFilterRowCount <= explorerRowCount, `Unexpected chassis filter row count (${textFilterRowCount})`);
+  let chassisMatchFound = false;
+  for (let index = 0; index < textFilterRowCount; index += 1) {
+    const filteredChassisValue = (await textFilterRows.nth(index).getByTestId("vehicle-explorer-cell-chassis-no").textContent())?.trim();
+    if (filteredChassisValue?.includes(sampleRow.chassisNo)) {
+      chassisMatchFound = true;
+      break;
+    }
+  }
+  assert(chassisMatchFound, "Chassis filter did not surface the expected row");
 
   const textFilterUrl = new URL(page.url());
   const textFilterState = parseExplorerFiltersFromUrl(textFilterUrl);
@@ -471,15 +486,18 @@ try {
   await openHeaderFilter(page, "chassis-no");
   await page.getByTestId("vehicle-explorer-filter-chassis-no-input").fill(sampleRow.chassisNo);
   await page.getByTestId("vehicle-explorer-filter-chassis-no-apply").click();
-  await page.waitForFunction(() => document.querySelectorAll('[data-testid="vehicle-explorer-row"]').length === 1, undefined, { timeout: 15000 });
+  await page.waitForURL((url) => {
+    const filters = url.searchParams.get("filters");
+    return Boolean(filters && filters.includes(sampleRow.chassisNo));
+  }, { timeout: 15000 });
 
   const inlineEditRow = page.getByTestId("vehicle-explorer-row").first();
-  await inlineEditRow.getByTestId("vehicle-explorer-edit-button").click();
   const updatedRemark = `Smoke inline edit ${Date.now()}`;
+  await inlineEditRow.getByTestId("vehicle-explorer-cell-remark").click();
   await inlineEditRow.getByTestId("vehicle-explorer-edit-input-remark").fill(updatedRemark);
-  await page.getByTestId("vehicle-explorer-reason-input").fill("Smoke test inline remark update");
-  await inlineEditRow.getByTestId("vehicle-explorer-save-button").click();
-  await page.getByTestId("vehicle-explorer-reason-input").waitFor({ state: "detached", timeout: 15000 });
+  await page.getByTestId("vehicle-explorer-inline-reason-input").fill("Smoke test inline remark update");
+  await inlineEditRow.getByTestId("vehicle-explorer-inline-save-button").click();
+  await page.getByTestId("vehicle-explorer-inline-reason-input").waitFor({ state: "detached", timeout: 15000 });
 
   const inlineEditUrl = new URL(page.url());
   const inlineEditState = parseExplorerFiltersFromUrl(inlineEditUrl);

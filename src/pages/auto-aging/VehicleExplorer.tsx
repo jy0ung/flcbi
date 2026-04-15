@@ -12,9 +12,8 @@ import type {
   ExplorerPreset,
   ExplorerQuery,
   ExplorerSavedView,
-  UpdateVehicleCorrectionsRequest,
 } from "@flcbi/contracts";
-import { BellRing, BookmarkPlus, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Download, Loader2, Search, Trash2, X } from "lucide-react";
+import { BellRing, BookmarkPlus, ChevronDown, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Download, Loader2, Search, Trash2, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -28,11 +27,20 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { PageHeader } from "@/components/shared/PageHeader";
 import { QueryErrorState } from "@/components/shared/QueryErrorState";
 import { toast } from "@/components/ui/sonner";
 import { useAuth } from "@/contexts/AuthContext";
+import { cn } from "@/lib/utils";
 import {
   type ExplorerFilterApi,
   type ExplorerFilterDateKey,
@@ -53,9 +61,6 @@ import {
 } from "@/hooks/api/use-platform";
 import { VehicleExplorerGrid } from "./VehicleExplorerGrid";
 
-const presetOptions: Array<{ value: ExplorerPreset; label: string }> = Object.entries(EXPLORER_PRESET_LABELS).map(
-  ([value, label]) => ({ value: value as ExplorerPreset, label }),
-);
 const explorerPageSizeOptions = [25, 50, 100] as const;
 const defaultExplorerPageSize = 50;
 const defaultExplorerSortField = "row_number";
@@ -175,6 +180,7 @@ export default function VehicleExplorer() {
   const query = React.useMemo(() => parseExplorerQuery(searchParams), [searchParams]);
   const [pageInput, setPageInput] = React.useState(String(query.page));
   const [isSaveDialogOpen, setIsSaveDialogOpen] = React.useState(false);
+  const [isSavedViewsMenuOpen, setIsSavedViewsMenuOpen] = React.useState(false);
   const [savedViewName, setSavedViewName] = React.useState("");
   const [deletingSavedView, setDeletingSavedView] = React.useState<ExplorerSavedView | null>(null);
 
@@ -319,10 +325,12 @@ export default function VehicleExplorer() {
   const openSaveDialog = () => {
     setSavedViewName(activeSavedView?.name ?? "");
     setIsSaveDialogOpen(true);
+    setIsSavedViewsMenuOpen(false);
   };
 
   const applySavedView = (savedView: ExplorerSavedView) => {
     setSearchParams(buildExplorerSearchParams(savedView.query));
+    setIsSavedViewsMenuOpen(false);
   };
 
   const handleSaveView = async (event: React.FormEvent<HTMLFormElement>) => {
@@ -356,6 +364,7 @@ export default function VehicleExplorer() {
       await deleteSavedView.mutateAsync(target.id);
       toast.success(`Deleted saved view ${target.name}`);
       setDeletingSavedView(null);
+      setIsSavedViewsMenuOpen(false);
     } catch (deleteError) {
       toast.error(deleteError instanceof Error ? deleteError.message : "Could not delete the saved view");
     }
@@ -472,140 +481,11 @@ export default function VehicleExplorer() {
     <div className="space-y-4 animate-fade-in">
       <PageHeader
         title="Vehicle Explorer"
-        description={
-          presetLabel
-            ? `${result ? `${formatExplorerRange(result.total, result.page, result.pageSize)} in ${presetLabel}` : "Loading vehicles"}`
-            : result
-              ? formatExplorerRange(result.total, result.page, result.pageSize)
-              : "Loading vehicles"
-        }
         breadcrumbs={[{ label: "FLC BI" }, { label: "Auto Aging" }, { label: "Vehicle Explorer" }]}
-        actions={
-          canExport ? (
-            <div className="flex flex-wrap items-center gap-2">
-              <Button variant="outline" size="sm" onClick={() => navigate("/auto-aging/exports")}>
-                View Exports
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => void handleCreateSubscription()}
-                disabled={!result || result.total === 0 || createExportSubscription.isPending}
-              >
-                <BellRing className="mr-1 h-3.5 w-3.5" />
-                {createExportSubscription.isPending ? "Saving…" : "Save Daily Export"}
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => void handleExport()}
-                disabled={!result || result.total === 0 || createExport.isPending}
-              >
-                <Download className="mr-1 h-3.5 w-3.5" />
-                {createExport.isPending ? "Queueing…" : "Request CSV"}
-              </Button>
-            </div>
-          ) : undefined
-        }
       />
 
-      {presetLabel && (
-        <div className="glass-panel flex items-center justify-between gap-3 p-4">
-          <div>
-            <p className="text-sm font-medium text-foreground">{presetLabel}</p>
-            <p className="text-xs text-muted-foreground">This view was opened from an executive dashboard drill-down.</p>
-          </div>
-          <Button variant="outline" size="sm" onClick={() => updateQuery((current) => ({ ...current, preset: undefined, page: 1 }))}>
-            <X className="mr-1 h-3.5 w-3.5" />
-            Clear Preset
-          </Button>
-        </div>
-      )}
-
-      <div className="glass-panel p-4 space-y-4" data-testid="explorer-saved-views-panel">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-          <div className="space-y-1">
-            <p className="text-sm font-medium text-foreground">Saved Views</p>
-            <p className="text-xs text-muted-foreground">
-              Save the current search, filters, and sort combination to reopen a common slice in one click.
-            </p>
-            {activeSavedView && (
-              <Badge variant="secondary" className="w-fit">
-                Active: {activeSavedView.name}
-              </Badge>
-            )}
-          </div>
-          <Button variant="outline" size="sm" onClick={openSaveDialog} data-testid="explorer-save-view-button">
-            <BookmarkPlus className="mr-1 h-3.5 w-3.5" />
-            Save Current View
-          </Button>
-        </div>
-
-        {savedViewsQuery.isError && (
-          <p className="text-xs text-destructive">Could not load saved views right now. You can still save a new one.</p>
-        )}
-
-        {!savedViewsQuery.isError && savedViews.length === 0 && (
-          <p className="text-xs text-muted-foreground" data-testid="explorer-saved-views-empty">
-            No saved views yet. Save this filter combination to come back to it later.
-          </p>
-        )}
-
-        {!savedViewsQuery.isError && savedViews.length > 0 && (
-          <div className="space-y-2">
-            {savedViews.map((savedView) => {
-              const isActive = activeSavedView?.id === savedView.id;
-
-              return (
-                <div
-                  key={savedView.id}
-                  role="button"
-                  tabIndex={0}
-                  aria-label={`Open saved view ${savedView.name}`}
-                  className={`flex items-center justify-between gap-3 rounded-lg border px-3 py-3 transition ${
-                    isActive ? "border-primary/60 bg-primary/5" : "border-border bg-secondary/10 hover:bg-secondary/20"
-                  }`}
-                  onClick={() => applySavedView(savedView)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter" || event.key === " ") {
-                      event.preventDefault();
-                      applySavedView(savedView);
-                    }
-                  }}
-                  data-testid="explorer-saved-view-row"
-                >
-                  <div className="min-w-0 space-y-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <p className="truncate text-sm font-medium text-foreground">{savedView.name}</p>
-                      {isActive && (
-                        <Badge variant="secondary" className="text-[10px] uppercase tracking-wide">
-                          Active
-                        </Badge>
-                      )}
-                    </div>
-                    <p className="truncate text-xs text-muted-foreground">{describeExplorerQuery(savedView.query)}</p>
-                  </div>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      setDeletingSavedView(savedView);
-                    }}
-                    data-testid="explorer-saved-view-delete"
-                    aria-label={`Delete saved view ${savedView.name}`}
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </Button>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
-
       <div className="glass-panel space-y-3 p-4" data-testid="vehicle-explorer-toolbar">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
           <div className="relative flex-1">
             <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
             <Input
@@ -617,81 +497,203 @@ export default function VehicleExplorer() {
             />
           </div>
           <div className="flex flex-wrap items-center gap-2">
+            <DropdownMenu open={isSavedViewsMenuOpen} onOpenChange={setIsSavedViewsMenuOpen}>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="sm" data-testid="explorer-saved-views-trigger">
+                  <BookmarkPlus className="h-3.5 w-3.5" />
+                  <span className="max-w-[12rem] truncate">{activeSavedView?.name ?? "Saved Views"}</span>
+                  <ChevronDown className="h-3.5 w-3.5" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-[22rem]" data-testid="explorer-saved-views-menu">
+                <DropdownMenuLabel>Saved Views</DropdownMenuLabel>
+                <p className="px-2 pb-2 text-xs text-muted-foreground">
+                  Save and reopen the current search, filters, and sort in one click.
+                </p>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onSelect={(event) => {
+                  event.preventDefault();
+                  openSaveDialog();
+                }} data-testid="explorer-save-view-button">
+                  <BookmarkPlus className="mr-2 h-3.5 w-3.5" />
+                  Save Current View
+                </DropdownMenuItem>
+                {activeSavedView && (
+                  <div className="px-2 pt-2">
+                    <Badge variant="secondary" className="w-fit text-[10px] uppercase tracking-wide">
+                      Active: {activeSavedView.name}
+                    </Badge>
+                  </div>
+                )}
+                {savedViewsQuery.isError ? (
+                  <p className="px-2 py-3 text-xs text-destructive">Could not load saved views right now.</p>
+                ) : savedViews.length === 0 ? (
+                  <p className="px-2 py-3 text-xs text-muted-foreground" data-testid="explorer-saved-views-empty">
+                    No saved views yet.
+                  </p>
+                ) : (
+                  <div className="max-h-72 space-y-1 overflow-y-auto p-1">
+                    {savedViews.map((savedView) => {
+                      const isActive = activeSavedView?.id === savedView.id;
+
+                      return (
+                        <div
+                          key={savedView.id}
+                          className={cn(
+                            "flex items-start gap-2 rounded-md border px-2 py-2",
+                            isActive ? "border-primary/60 bg-primary/5" : "border-border/60 bg-background/40",
+                          )}
+                          data-testid="explorer-saved-view-row"
+                        >
+                          <button
+                            type="button"
+                            className="min-w-0 flex-1 text-left"
+                            aria-label={`Open saved view ${savedView.name}`}
+                            onClick={() => applySavedView(savedView)}
+                          >
+                            <div className="flex items-center gap-2">
+                              <span className="truncate text-sm font-medium text-foreground">{savedView.name}</span>
+                              {isActive && (
+                                <Badge variant="secondary" className="text-[10px] uppercase tracking-wide">
+                                  Active
+                                </Badge>
+                              )}
+                            </div>
+                            <p className="truncate pt-1 text-xs text-muted-foreground">{describeExplorerQuery(savedView.query)}</p>
+                          </button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7 shrink-0"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              setDeletingSavedView(savedView);
+                            }}
+                            data-testid="explorer-saved-view-delete"
+                            aria-label={`Delete saved view ${savedView.name}`}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
             <Button variant="outline" size="sm" onClick={clearAllFilters} data-testid="vehicle-explorer-clear-filters">
               <X className="mr-1 h-3.5 w-3.5" />
-              Clear All
+              Clear Filters
             </Button>
+            {canExport && (
+              <Button variant="outline" size="sm" onClick={() => navigate("/auto-aging/exports")}>
+                View Exports
+              </Button>
+            )}
+            {canExport && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => void handleCreateSubscription()}
+                disabled={!result || result.total === 0 || createExportSubscription.isPending}
+              >
+                <BellRing className="mr-1 h-3.5 w-3.5" />
+                {createExportSubscription.isPending ? "Saving…" : "Save Daily Export"}
+              </Button>
+            )}
+            {canExport && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => void handleExport()}
+                disabled={!result || result.total === 0 || createExport.isPending}
+              >
+                <Download className="mr-1 h-3.5 w-3.5" />
+                {createExport.isPending ? "Queueing…" : "Request CSV"}
+              </Button>
+            )}
           </div>
         </div>
 
         <div className="flex flex-wrap items-center gap-2" data-testid="vehicle-explorer-filter-chips">
-          {filterTokens.length > 0 ? (
-            filterTokens.map((token) => (
-              <Badge key={token} variant="secondary" className="text-[11px]">
-                {token}
-              </Badge>
-            ))
-          ) : (
-            <span className="text-xs text-muted-foreground">No active filters.</span>
+          {presetLabel && (
+            <Badge variant="outline" className="gap-1 text-[11px]">
+              Preset: {presetLabel}
+              <button
+                type="button"
+                className="rounded-full p-0.5 hover:bg-primary/10"
+                onClick={() => updateQuery((current) => ({ ...current, preset: undefined, page: 1 }))}
+                aria-label="Clear preset"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </Badge>
+          )}
+          {filterTokens.length > 0 ? filterTokens.map((token) => (
+            <Badge key={token} variant="secondary" className="text-[11px]">
+              {token}
+            </Badge>
+          )) : (
+            <span className="text-xs text-muted-foreground">Use column headers to filter this sheet.</span>
           )}
         </div>
+
+        {result && (
+          <div
+            className="flex flex-col gap-3 border-t border-border/50 pt-3 xl:flex-row xl:items-center xl:justify-between"
+            data-testid="vehicle-explorer-pagination-top"
+          >
+            <div className="space-y-1">
+              <p className="text-sm font-medium text-foreground" data-testid="vehicle-explorer-pagination-summary">
+                {formatExplorerRange(result.total, result.page, result.pageSize)}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                Page {result.page} of {totalPages}
+              </p>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <label htmlFor="vehicle-explorer-page-size" className="text-xs font-medium text-muted-foreground">
+                Rows
+              </label>
+              <select
+                id="vehicle-explorer-page-size"
+                data-testid="vehicle-explorer-page-size"
+                value={query.pageSize}
+                onChange={(event) => handlePageSizeChange(Number(event.target.value))}
+                className="h-8 rounded-md border border-border bg-secondary px-3 text-xs text-foreground"
+              >
+                {explorerPageSizeOptions.map((option) => (
+                  <option key={option} value={option}>
+                    {option}
+                  </option>
+                ))}
+              </select>
+
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => handlePageChange(query.page - 1)}
+                disabled={query.page === 1}
+                data-testid="vehicle-explorer-previous-page-top"
+              >
+                <ChevronLeft className="mr-1 h-3.5 w-3.5" />
+                Previous
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => handlePageChange(query.page + 1)}
+                disabled={query.page >= totalPages}
+                data-testid="vehicle-explorer-next-page-top"
+              >
+                Next
+                <ChevronRight className="ml-1 h-3.5 w-3.5" />
+              </Button>
+            </div>
+          </div>
+        )}
       </div>
-
-      {result && (
-        <div
-          className="glass-panel flex flex-col gap-3 p-4 xl:flex-row xl:items-center xl:justify-between"
-          data-testid="vehicle-explorer-pagination-top"
-        >
-          <div className="space-y-1">
-            <p className="text-sm font-medium text-foreground" data-testid="vehicle-explorer-pagination-summary">
-              {formatExplorerRange(result.total, result.page, result.pageSize)}
-            </p>
-            <p className="text-xs text-muted-foreground">
-              Page {result.page} of {totalPages}
-            </p>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2">
-            <label htmlFor="vehicle-explorer-page-size" className="text-xs font-medium text-muted-foreground">
-              Rows per page
-            </label>
-            <select
-              id="vehicle-explorer-page-size"
-              data-testid="vehicle-explorer-page-size"
-              value={query.pageSize}
-              onChange={(event) => handlePageSizeChange(Number(event.target.value))}
-              className="h-8 rounded-md border border-border bg-secondary px-3 text-xs text-foreground"
-            >
-              {explorerPageSizeOptions.map((option) => (
-                <option key={option} value={option}>
-                  {option}
-                </option>
-              ))}
-            </select>
-
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => handlePageChange(query.page - 1)}
-              disabled={query.page === 1}
-              data-testid="vehicle-explorer-previous-page-top"
-            >
-              <ChevronLeft className="mr-1 h-3.5 w-3.5" />
-              Previous
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => handlePageChange(query.page + 1)}
-              disabled={query.page >= totalPages}
-              data-testid="vehicle-explorer-next-page-top"
-            >
-              Next
-              <ChevronRight className="ml-1 h-3.5 w-3.5" />
-            </Button>
-          </div>
-        </div>
-      )}
 
       {isLoading && <div className="text-sm text-muted-foreground">Loading vehicles...</div>}
 

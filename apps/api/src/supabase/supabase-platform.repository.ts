@@ -31,7 +31,7 @@ import {
   publishCanonical,
   queryVehicles,
   summarizeParsedWorkbook,
-  VEHICLE_CORRECTION_EDITOR_ROLES,
+  VEHICLE_EXPLORER_EDIT_ROLES,
   type AppRole,
   type AlertRule,
   type AuditEvent,
@@ -1717,14 +1717,10 @@ export class SupabasePlatformRepository implements PlatformRepository {
       return this.fallback.queryExplorer(user, query);
     }
 
-    const [visibleRows, visibleVehicles] = await Promise.all([
-      this.fetchVisibleWorkbookRows(user),
-      this.fetchVisibleVehicleRows(user),
-    ]);
-    const editableChassisNos = new Set(visibleVehicles.map((row) => row.chassis_no));
+    const visibleRows = await this.fetchVisibleWorkbookRows(user);
     const workbookRows = visibleRows.map((row) => ({
       ...row,
-      canEditCorrections: editableChassisNos.has(row.chassis_no),
+      canEditCorrections: canManageVehicleCorrections(user),
     }));
 
     return queryVehicles(workbookRows, query);
@@ -1735,14 +1731,21 @@ export class SupabasePlatformRepository implements PlatformRepository {
       return this.fallback.getVehicle(user, chassisNo);
     }
 
+    const corrections = await this.fetchVehicleCorrections(this.requireCompanyId(user), [chassisNo]);
     const visibleVehicles = await this.fetchVisibleVehicles(user);
-    const vehicle = visibleVehicles.find((item) => item.chassis_no === chassisNo);
+    let vehicle = visibleVehicles.find((item) => item.chassis_no === chassisNo);
+    if (!vehicle) {
+      const workbookRows = await this.fetchVisibleWorkbookRows(user);
+      const workbookRow = workbookRows.find((item) => item.chassis_no === chassisNo);
+      if (workbookRow) {
+        vehicle = workbookRow;
+      }
+    }
     if (!vehicle) {
       throw new NotFoundException(`Vehicle ${chassisNo} not found`);
     }
 
     const issues = (await this.getQualityIssues(user)).filter((issue) => issue.chassisNo === chassisNo);
-    const corrections = await this.fetchVehicleCorrections(this.requireCompanyId(user), [chassisNo]);
     return {
       vehicle,
       issues,
@@ -1768,13 +1771,28 @@ export class SupabasePlatformRepository implements PlatformRepository {
       throw new NotFoundException("The editing user could not be resolved");
     }
 
-    const baseRows = await this.fetchVisibleVehicleRows(user);
+    const [baseRows, workbookRows] = await Promise.all([
+      this.fetchVisibleVehicleRows(user),
+      this.fetchWorkbookRows(companyId),
+    ]);
     const baseRow = baseRows.find((item) => item.chassis_no === chassisNo);
-    if (!baseRow) {
+    const rawWorkbookRow = workbookRows.find((item) => {
+      if (item.chassis_no !== chassisNo) {
+        return false;
+      }
+      if (user.role === "super_admin" || user.role === "company_admin" || user.role === "director" || user.role === "analyst") {
+        return true;
+      }
+      if (user.branchId) {
+        return (item.branch_code ?? "UNKNOWN") === user.branchId;
+      }
+      return true;
+    });
+    if (!baseRow && !rawWorkbookRow) {
       throw new NotFoundException(`Vehicle ${chassisNo} not found`);
     }
 
-    const baseVehicle = this.mapVehicleRow(baseRow);
+    const baseVehicle = baseRow ? this.mapVehicleRow(baseRow) : this.mapWorkbookRow(rawWorkbookRow!);
     const existingCorrections = await this.fetchVehicleCorrections(companyId, [chassisNo]);
     const existingByField = new Map(
       (existingCorrections.get(chassisNo) ?? []).map((item) => [item.field, item.value]),
@@ -3933,7 +3951,7 @@ function canViewCompanyWideExports(user: User) {
 }
 
 function canManageVehicleCorrections(user: User) {
-  return VEHICLE_CORRECTION_EDITOR_ROLES.includes(user.role);
+  return VEHICLE_EXPLORER_EDIT_ROLES.includes(user.role);
 }
 
 function canManageExplorerMappings(user: User) {

@@ -1,6 +1,6 @@
 import React from "react";
 import {
-  VEHICLE_CORRECTION_EDITOR_ROLES,
+  VEHICLE_EXPLORER_EDIT_ROLES,
   type ExplorerMappingsResponse,
   type ExplorerQuery,
   type UpdateVehicleCorrectionsRequest,
@@ -8,10 +8,7 @@ import {
   type WorkbookExplorerRow,
 } from "@flcbi/contracts";
 import {
-  Check,
   Filter,
-  Pencil,
-  RotateCcw,
   Save,
   X,
 } from "lucide-react";
@@ -26,7 +23,6 @@ import {
   VEHICLE_CORRECTION_DATE_FIELDS,
   VEHICLE_CORRECTION_EDIT_FIELDS,
   VEHICLE_CORRECTION_SELECT_FIELDS,
-  type VehicleCorrectionDraft,
 } from "@/lib/vehicle-corrections-form";
 import { type ExplorerFilterApi } from "@/lib/explorer-filters";
 import { cn } from "@/lib/utils";
@@ -66,6 +62,10 @@ function filterPopoverTestId(columnKey: string) {
 
 function filterControlTestId(columnKey: string, suffix: string) {
   return `vehicle-explorer-filter-${toKebabCase(columnKey)}-${suffix}`;
+}
+
+function cellTestId(columnKey: string) {
+  return `vehicle-explorer-cell-${toKebabCase(columnKey)}`;
 }
 
 function getCellValue(row: WorkbookExplorerRow, key: string) {
@@ -614,6 +614,7 @@ function FieldEditor({
   onKeyDown,
   disabled,
   options,
+  autoFocus,
 }: {
   field: EditableField;
   value: string;
@@ -621,6 +622,7 @@ function FieldEditor({
   onKeyDown: React.KeyboardEventHandler<HTMLInputElement | HTMLSelectElement>;
   disabled?: boolean;
   options?: Array<{ value: string; label: string }>;
+  autoFocus?: boolean;
 }) {
   const isSelectField = VEHICLE_CORRECTION_SELECT_FIELDS.includes(field);
   const isDateField = VEHICLE_CORRECTION_DATE_FIELDS.includes(field);
@@ -652,6 +654,7 @@ function FieldEditor({
         onKeyDown={onKeyDown}
         disabled={disabled}
         className="h-8 w-full rounded-md border border-border bg-background px-3 text-xs text-foreground"
+        autoFocus={autoFocus}
       >
         <option value="">{field === "branch_code" ? "Select branch" : "Select payment"}</option>
         {selectOptions.map((option) => (
@@ -672,12 +675,46 @@ function FieldEditor({
       onKeyDown={onKeyDown}
       disabled={disabled}
       required={field !== "remark"}
+      autoFocus={autoFocus}
       className={cn(
         "h-8 rounded-md text-xs",
         field === "remark" ? "min-w-[240px]" : "min-w-[160px]",
       )}
     />
   );
+}
+
+interface EditingCell {
+  chassisNo: string;
+  field: EditableField;
+}
+
+type CellNavigationDirection = "next" | "previous" | null;
+
+const LAST_REASON_SESSION_KEY = "flcbi.vehicle-explorer.last-reason";
+
+function readLastReason() {
+  if (typeof window === "undefined") {
+    return "";
+  }
+
+  try {
+    return window.sessionStorage.getItem(LAST_REASON_SESSION_KEY) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+function writeLastReason(reason: string) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  try {
+    window.sessionStorage.setItem(LAST_REASON_SESSION_KEY, reason);
+  } catch {
+    // best effort only
+  }
 }
 
 export function VehicleExplorerGrid({
@@ -691,16 +728,25 @@ export function VehicleExplorerGrid({
   onSaveCorrections,
   savingCorrections,
 }: VehicleExplorerGridProps) {
-  const { hasRole } = useAuth();
-  const canEditCorrections = hasRole(VEHICLE_CORRECTION_EDITOR_ROLES);
-  const [editingChassisNo, setEditingChassisNo] = React.useState<string | null>(null);
-  const [draft, setDraft] = React.useState<VehicleCorrectionDraft>(buildVehicleCorrectionDraft());
+  const { hasRole, isAuthenticated } = useAuth();
+  const canEditCorrections = isAuthenticated && hasRole(VEHICLE_EXPLORER_EDIT_ROLES);
+  const [editingCell, setEditingCell] = React.useState<EditingCell | null>(null);
+  const [draftValue, setDraftValue] = React.useState("");
   const [reason, setReason] = React.useState("");
-  const [savingChassisNo, setSavingChassisNo] = React.useState<string | null>(null);
-
+  const [savingCell, setSavingCell] = React.useState<EditingCell | null>(null);
+  const editorRef = React.useRef<HTMLDivElement | null>(null);
+  const reasonInputRef = React.useRef<HTMLInputElement | null>(null);
+  const displayColumns = React.useMemo(
+    () => columns.filter((column) => column.key !== "source_headers" && column.key !== "source_values"),
+    [columns],
+  );
+  const editableColumnKeys = React.useMemo(
+    () => displayColumns.map((column) => column.key).filter(isEditableField),
+    [displayColumns],
+  );
   const editingRow = React.useMemo(
-    () => rows.find((row) => row.chassis_no === editingChassisNo) ?? null,
-    [editingChassisNo, rows],
+    () => rows.find((row) => row.chassis_no === editingCell?.chassisNo) ?? null,
+    [editingCell?.chassisNo, rows],
   );
 
   const branchEditOptions = React.useMemo(
@@ -719,77 +765,161 @@ export function VehicleExplorerGrid({
   );
 
   React.useEffect(() => {
-    if (!editingChassisNo) {
+    if (!editingCell) {
       return;
     }
 
     if (!editingRow) {
-      setEditingChassisNo(null);
-      setDraft(buildVehicleCorrectionDraft());
+      setEditingCell(null);
+      setDraftValue("");
       setReason("");
     }
-  }, [editingChassisNo, editingRow]);
+  }, [editingCell, editingRow]);
 
-  const beginEdit = (row: WorkbookExplorerRow) => {
-    setEditingChassisNo(row.chassis_no);
-    setDraft(buildVehicleCorrectionDraft(row));
-    setReason("");
-  };
-
-  const cancelEdit = () => {
-    setEditingChassisNo(null);
-    setDraft(buildVehicleCorrectionDraft());
-    setReason("");
-  };
-
-  const updateDraftField = (field: EditableField, value: string) => {
-    setDraft((current) => ({
-      ...current,
-      [field]: value,
-    }));
-  };
-
-  const handleSave = async () => {
-    if (!editingRow) {
+  const cancelEdit = React.useCallback(() => {
+    if (savingCell) {
       return;
     }
 
-    const trimmedReason = reason.trim();
-    if (trimmedReason.length < 5) {
-      toast.error("Please add a short reason for the correction.");
+    setEditingCell(null);
+    setDraftValue("");
+    setReason(readLastReason());
+  }, [savingCell]);
+
+  React.useEffect(() => {
+    if (!editingCell) {
+      return undefined;
+    }
+
+    const handlePointerDown = (event: MouseEvent) => {
+      if (editorRef.current?.contains(event.target as Node)) {
+        return;
+      }
+      cancelEdit();
+    };
+
+    document.addEventListener("mousedown", handlePointerDown, true);
+    return () => document.removeEventListener("mousedown", handlePointerDown, true);
+  }, [cancelEdit, editingCell]);
+
+  const getEditableFieldValue = React.useCallback((row: WorkbookExplorerRow, field: EditableField) => {
+    const value = getCellValue(row, field);
+    return value == null ? "" : String(value);
+  }, []);
+
+  const beginEdit = React.useCallback((row: WorkbookExplorerRow, field: EditableField) => {
+    if (!canEditCorrections || !row.canEditCorrections) {
       return;
     }
 
-    const { input, changedCount } = buildVehicleCorrectionUpdate(editingRow, draft, trimmedReason);
+    setEditingCell({ chassisNo: row.chassis_no, field });
+    setDraftValue(getEditableFieldValue(row, field));
+    setReason(readLastReason());
+  }, [canEditCorrections, getEditableFieldValue]);
+
+  const getEditingOptions = React.useCallback((field: EditableField) => {
+    if (field === "branch_code") {
+      return branchEditOptions;
+    }
+    if (field === "payment_method") {
+      return paymentEditOptions;
+    }
+    return undefined;
+  }, [branchEditOptions, paymentEditOptions]);
+
+  const getAdjacentField = React.useCallback((field: EditableField, direction: Exclude<CellNavigationDirection, null>) => {
+    const currentIndex = editableColumnKeys.indexOf(field);
+    if (currentIndex === -1) {
+      return null;
+    }
+
+    const nextIndex = direction === "next" ? currentIndex + 1 : currentIndex - 1;
+    return editableColumnKeys[nextIndex] ?? null;
+  }, [editableColumnKeys]);
+
+  const moveToAdjacentCell = React.useCallback((
+    row: WorkbookExplorerRow,
+    field: EditableField,
+    direction: Exclude<CellNavigationDirection, null>,
+    nextReason: string,
+  ) => {
+    const nextField = getAdjacentField(field, direction);
+    if (!nextField) {
+      setEditingCell(null);
+      setDraftValue("");
+      setReason(nextReason);
+      return;
+    }
+
+    setEditingCell({ chassisNo: row.chassis_no, field: nextField });
+    setDraftValue(getEditableFieldValue(row, nextField));
+    setReason(nextReason);
+  }, [getAdjacentField, getEditableFieldValue]);
+
+  const handleSave = React.useCallback(async (direction: CellNavigationDirection = null) => {
+    if (!editingRow || !editingCell) {
+      return;
+    }
+
+    const field = editingCell.field;
+    const nextReason = reason.trim();
+    const nextDraft = buildVehicleCorrectionDraft(editingRow);
+    nextDraft[field] = draftValue;
+
+    const { input, changedCount } = buildVehicleCorrectionUpdate(editingRow, nextDraft, nextReason);
     if (changedCount === 0) {
-      toast.info("No vehicle changes to save.");
+      if (direction) {
+        moveToAdjacentCell(editingRow, field, direction, nextReason || readLastReason());
+      } else {
+        cancelEdit();
+      }
       return;
     }
 
-    setSavingChassisNo(editingRow.chassis_no);
+    if (nextReason.length < 5) {
+      toast.error("Please add a short reason for the correction.");
+      reasonInputRef.current?.focus();
+      return;
+    }
+
+    setSavingCell(editingCell);
     try {
       await onSaveCorrections(editingRow.chassis_no, input);
-      toast.success("Vehicle corrections saved.");
-      cancelEdit();
+      writeLastReason(nextReason);
+      toast.success(`Updated ${field.replace(/_/g, " ")} for ${editingRow.chassis_no}.`);
+      if (direction) {
+        moveToAdjacentCell(editingRow, field, direction, nextReason);
+      } else {
+        setEditingCell(null);
+        setDraftValue("");
+        setReason(nextReason);
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : "Could not save vehicle corrections";
       toast.error(message);
     } finally {
-      setSavingChassisNo(null);
+      setSavingCell(null);
     }
-  };
+  }, [cancelEdit, draftValue, editingCell, editingRow, moveToAdjacentCell, onSaveCorrections, reason]);
 
-  const handleEditorKeyDown = (event: React.KeyboardEvent<HTMLInputElement | HTMLSelectElement>) => {
+  const handleEditorKeyDown = React.useCallback((event: React.KeyboardEvent<HTMLInputElement | HTMLSelectElement>) => {
     if (event.key === "Escape") {
       event.preventDefault();
       cancelEdit();
       return;
     }
+
+    if (event.key === "Tab") {
+      event.preventDefault();
+      void handleSave(event.shiftKey ? "previous" : "next");
+      return;
+    }
+
     if (event.key === "Enter") {
       event.preventDefault();
       void handleSave();
     }
-  };
+  }, [cancelEdit, handleSave]);
 
   const renderFilterPopover = (column: WorkbookExplorerColumn) => {
     const filterValue = query.filters?.columnFilters?.[column.key];
@@ -863,33 +993,58 @@ export function VehicleExplorerGrid({
     }
   };
 
-  const displayColumns = columns.filter((column) => column.key !== "source_headers" && column.key !== "source_values");
-
-  const getEditingOptions = (field: EditableField) => {
-    if (field === "branch_code") {
-      return branchEditOptions;
-    }
-    if (field === "payment_method") {
-      return paymentEditOptions;
-    }
-    return undefined;
-  };
-
   const renderCellContent = (row: WorkbookExplorerRow, column: WorkbookExplorerColumn, isEditing: boolean) => {
     const field = column.key;
     const value = getCellValue(row, field);
-    const draftValue = (draft as Record<string, string | undefined>)[field] ?? "";
 
     if (isEditing && isEditableField(field)) {
       return (
-        <FieldEditor
-          field={field}
-          value={draftValue}
-          onChange={(nextValue) => updateDraftField(field, nextValue)}
-          onKeyDown={handleEditorKeyDown}
-          disabled={savingCorrections || savingChassisNo === row.chassis_no}
-          options={getEditingOptions(field)}
-        />
+        <div ref={editorRef} className="space-y-2 rounded-md border border-primary/30 bg-background/95 p-2 shadow-lg">
+          <FieldEditor
+            field={field}
+            value={draftValue}
+            onChange={setDraftValue}
+            onKeyDown={handleEditorKeyDown}
+            disabled={savingCorrections || savingCell?.chassisNo === row.chassis_no}
+            options={getEditingOptions(field)}
+            autoFocus
+          />
+          <div className="flex flex-wrap items-center gap-2">
+            <Input
+              ref={reasonInputRef}
+              data-testid="vehicle-explorer-inline-reason-input"
+              value={reason}
+              onChange={(event) => setReason(event.target.value)}
+              onKeyDown={handleEditorKeyDown}
+              disabled={savingCorrections || savingCell?.chassisNo === row.chassis_no}
+              placeholder="Reason for change"
+              className="h-8 min-w-[220px] flex-1 text-xs"
+            />
+            <Button
+              variant="default"
+              size="sm"
+              onClick={() => void handleSave()}
+              disabled={savingCorrections || savingCell?.chassisNo === row.chassis_no}
+              data-testid="vehicle-explorer-inline-save-button"
+            >
+              <Save className="h-3.5 w-3.5" />
+              Save
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={cancelEdit}
+              disabled={savingCorrections || savingCell?.chassisNo === row.chassis_no}
+              data-testid="vehicle-explorer-inline-cancel-button"
+            >
+              <X className="h-3.5 w-3.5" />
+              Cancel
+            </Button>
+          </div>
+          <p className="text-[11px] text-muted-foreground">
+            Enter saves, Tab moves to the next editable cell, and Escape cancels.
+          </p>
+        </div>
       );
     }
 
@@ -926,8 +1081,8 @@ export function VehicleExplorerGrid({
 
   return (
     <div className="glass-panel overflow-hidden">
-      <div className="max-h-[calc(100vh-28rem)] overflow-auto">
-        <table className="min-w-[2400px] table-fixed text-sm" style={{ minWidth: `${Math.max(2400, displayColumns.length * 120)}px` }}>
+      <div className="max-h-[calc(100vh-20rem)] overflow-auto">
+        <table className="table-fixed text-sm" style={{ minWidth: `${Math.max(1800, displayColumns.length * 150)}px` }}>
           <thead className="sticky top-0 z-20">
             <tr className="border-b border-border bg-secondary/30 text-left">
               {displayColumns.map((column) => {
@@ -968,43 +1123,40 @@ export function VehicleExplorerGrid({
                   </th>
                 );
               })}
-              <th
-                className="sticky right-0 z-30 border-b border-border/60 bg-secondary/95 px-3 py-3 text-xs font-medium text-muted-foreground backdrop-blur min-w-[112px]"
-              >
-                Action
-              </th>
             </tr>
           </thead>
           <tbody>
             {displayColumns.length > 0 && rows.map((row) => {
-              const isEditing = editingChassisNo === row.chassis_no;
-              const rowDraft = isEditing ? draft : buildVehicleCorrectionDraft(row);
+              const editableRow = canEditCorrections && Boolean(row.canEditCorrections);
 
               return (
-                <React.Fragment key={row.id}>
-                  <tr
-                    className={cn("data-table-row", !isEditing && "cursor-pointer", isEditing && "bg-primary/5")}
-                    onClick={() => {
-                      if (!isEditing) {
-                        onOpenVehicle(row.chassis_no);
-                      }
-                    }}
-                    onKeyDown={(event) => {
-                      if (isEditing) {
-                        return;
-                      }
-                      if (event.key === "Enter" || event.key === " ") {
-                        event.preventDefault();
-                        onOpenVehicle(row.chassis_no);
-                      }
-                    }}
-                    role={!isEditing ? "button" : undefined}
-                    tabIndex={!isEditing ? 0 : undefined}
-                    aria-label={`Open vehicle detail for ${row.chassis_no}`}
-                    data-testid="vehicle-explorer-row"
-                  >
+                <tr
+                  key={row.id}
+                  className={cn("data-table-row", !editingCell && "cursor-pointer")}
+                  onClick={() => {
+                    if (!editingCell) {
+                      onOpenVehicle(row.chassis_no);
+                    }
+                  }}
+                  onKeyDown={(event) => {
+                    if (editingCell) {
+                      return;
+                    }
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      onOpenVehicle(row.chassis_no);
+                    }
+                  }}
+                  role={!editingCell ? "button" : undefined}
+                  tabIndex={!editingCell ? 0 : undefined}
+                  aria-label={`Open vehicle detail for ${row.chassis_no}`}
+                  data-testid="vehicle-explorer-row"
+                  data-editable-row={editableRow ? "true" : "false"}
+                >
                     {displayColumns.map((column) => {
                       const stickyLeft = column.sticky === "left";
+                      const editableCell = editableRow && isEditableField(column.key);
+                      const isEditing = editingCell?.chassisNo === row.chassis_no && editingCell.field === column.key;
                       const stickyStyles = stickyLeft
                         ? {
                             position: "sticky" as const,
@@ -1020,105 +1172,40 @@ export function VehicleExplorerGrid({
                           key={`${row.id}-${column.key}`}
                           style={stickyStyles}
                           className={cn(
-                            "px-3 py-2 align-middle",
+                            "px-2.5 py-1.5 align-top",
                             column.width,
                             stickyLeft || column.sticky === "right" ? "bg-card/95 backdrop-blur" : "bg-card/60",
+                            editableCell && !isEditing && "cursor-cell hover:bg-primary/5",
+                            isEditing && "bg-primary/5",
                           )}
+                          data-testid={cellTestId(column.key)}
+                          onClick={(event) => {
+                            if (editableCell) {
+                              event.stopPropagation();
+                            }
+                            if (!editableCell || isEditing) {
+                              return;
+                            }
+                            beginEdit(row, column.key);
+                          }}
+                          onKeyDown={(event) => {
+                            if (!editableCell || isEditing) {
+                              return;
+                            }
+                            if (event.key === "Enter" || event.key === " ") {
+                              event.preventDefault();
+                              beginEdit(row, column.key);
+                            }
+                          }}
+                          role={editableCell && !isEditing ? "button" : undefined}
+                          tabIndex={editableCell && !isEditing ? 0 : undefined}
+                          aria-label={editableCell ? `Edit ${column.label} for ${row.chassis_no}` : undefined}
                         >
                           {renderCellContent(row, column, isEditing)}
                         </td>
                       );
                     })}
-                    <td
-                      className="sticky right-0 z-20 bg-card/95 px-3 py-2 align-middle backdrop-blur min-w-[112px]"
-                      onClick={(event) => event.stopPropagation()}
-                    >
-                      {!isEditing ? (
-                        canEditCorrections && row.canEditCorrections ? (
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => beginEdit(row)}
-                            disabled={savingCorrections}
-                            data-testid="vehicle-explorer-edit-button"
-                          >
-                            <Pencil className="mr-1 h-3.5 w-3.5" />
-                            Edit
-                          </Button>
-                        ) : (
-                          <span className="text-xs text-muted-foreground">View only</span>
-                        )
-                      ) : (
-                        <div className="flex items-center justify-end gap-2">
-                          <Button
-                            variant="default"
-                            size="sm"
-                            onClick={() => void handleSave()}
-                            disabled={savingCorrections || savingChassisNo === row.chassis_no}
-                            data-testid="vehicle-explorer-save-button"
-                          >
-                            {savingCorrections || savingChassisNo === row.chassis_no ? (
-                              <RotateCcw className="mr-1 h-3.5 w-3.5 animate-spin" />
-                            ) : (
-                              <Save className="mr-1 h-3.5 w-3.5" />
-                            )}
-                            Save
-                          </Button>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={cancelEdit}
-                            disabled={savingCorrections || savingChassisNo === row.chassis_no}
-                            data-testid="vehicle-explorer-cancel-button"
-                          >
-                            <X className="mr-1 h-3.5 w-3.5" />
-                            Cancel
-                          </Button>
-                        </div>
-                      )}
-                    </td>
-                  </tr>
-                  {isEditing && editingRow?.chassis_no === row.chassis_no && (
-                    <tr className="border-b border-border/50 bg-background/80">
-                      <td colSpan={displayColumns.length + 1} className="px-3 py-3">
-                        <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end">
-                          <div className="space-y-2">
-                            <label className="text-xs font-medium text-muted-foreground" htmlFor={`vehicle-explorer-reason-${row.chassis_no}`}>
-                              Reason for change
-                            </label>
-                            <Input
-                              id={`vehicle-explorer-reason-${row.chassis_no}`}
-                              data-testid="vehicle-explorer-reason-input"
-                              value={reason}
-                              onChange={(event) => setReason(event.target.value)}
-                              onKeyDown={handleEditorKeyDown}
-                              disabled={savingCorrections || savingChassisNo === row.chassis_no}
-                              placeholder="Describe why these corrections are needed"
-                              className="h-8 text-xs"
-                            />
-                            <p className="text-[11px] text-muted-foreground">
-                              Edit cells inline, then press Enter to save or Escape to cancel.
-                            </p>
-                          </div>
-                          <div className="text-xs text-muted-foreground lg:text-right">
-                            {VEHICLE_CORRECTION_EDIT_FIELDS.some((field) => {
-                              const next = (rowDraft[field] ?? "").trim();
-                              const current = (buildVehicleCorrectionDraft(row)[field] ?? "").trim();
-                              return next !== current;
-                            }) ? (
-                              <span className="inline-flex items-center gap-2 rounded-full border border-warning/30 bg-warning/10 px-3 py-1 text-warning">
-                                <Check className="h-3.5 w-3.5" />
-                                Unsaved changes
-                              </span>
-                            ) : (
-                              <span>No field changes yet.</span>
-                            )}
-                          </div>
-                        </div>
-                      </td>
-                    </tr>
-                  )}
-                </React.Fragment>
+                </tr>
               );
             })}
           </tbody>

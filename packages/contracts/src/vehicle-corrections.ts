@@ -1,11 +1,18 @@
 import type { AppRole, VehicleCanonical } from "./domain.js";
 
-export const VEHICLE_CORRECTION_EDITOR_ROLES: readonly AppRole[] = [
+export const VEHICLE_EXPLORER_EDIT_ROLES: readonly AppRole[] = [
   "super_admin",
   "company_admin",
   "director",
   "general_manager",
   "manager",
+  "sales",
+  "accounts",
+  "analyst",
+] as const;
+
+export const VEHICLE_CORRECTION_EDITOR_ROLES: readonly AppRole[] = [
+  ...VEHICLE_EXPLORER_EDIT_ROLES,
 ];
 
 export const VEHICLE_CORRECTION_DATE_FIELDS = [
