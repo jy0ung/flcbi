@@ -10,7 +10,7 @@ function createWorkbookBuffer(rows: unknown[][]) {
 }
 
 describe("parseWorkbook", () => {
-  it("parses Excel serial dates without relying on XLSX.SSF namespace exports", () => {
+  it("parses Excel serial dates without relying on XLSX.SSF namespace exports", async () => {
     const workbook = createWorkbookBuffer([
       [
         "CHASSIS NO.",
@@ -29,7 +29,7 @@ describe("parseWorkbook", () => {
       ["PMK123456A", 45748, 45755, 45768, 45770, 45774, 45782, "KK", "ATIVA", "Loan", ""],
     ]);
 
-    const parsed = parseWorkbook(workbook);
+    const parsed = await parseWorkbook(workbook);
 
     expect(parsed.missingColumns).toEqual([]);
     expect(parsed.rows).toHaveLength(2);
@@ -47,7 +47,7 @@ describe("parseWorkbook", () => {
     );
   });
 
-  it("accepts day-first text dates and reports missing chassis rows", () => {
+  it("accepts day-first text dates and reports missing chassis rows", async () => {
     const workbook = createWorkbookBuffer([
       [
         "CHASSIS NO.",
@@ -64,7 +64,7 @@ describe("parseWorkbook", () => {
       ["", "01/04/2025", "05/04/2025", "17/04/2025", "18/04/2025", "20/04/2025", "25/04/2025", "MYY", "MYVI", "Cash"],
     ]);
 
-    const parsed = parseWorkbook(workbook);
+    const parsed = await parseWorkbook(workbook);
 
     expect(parsed.rows[0]?.bg_date).toBe("2025-04-01");
     expect(parsed.issues).toEqual(

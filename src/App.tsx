@@ -131,10 +131,7 @@ function ProtectedRoutes() {
         <Route
           path="/auto-aging/mappings"
           element={(
-            <RoleBoundary
-              roles={["company_admin", "super_admin", "director"]}
-              title="Mapping Access Required"
-            >
+            <RoleBoundary roles={["company_admin", "super_admin"]} title="Mapping Access Required">
               <MappingAdmin />
             </RoleBoundary>
           )}

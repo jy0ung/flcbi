@@ -1,9 +1,8 @@
 import React from "react";
 import {
+  VEHICLE_CORRECTION_EDITOR_ROLES,
   VEHICLE_CORRECTION_FIELD_LABELS,
-  type UpdateVehicleCorrectionsRequest,
-  type VehicleCanonical,
-  type VehicleCorrectionField,
+  VEHICLE_CORRECTION_SELECT_FIELDS,
 } from "@flcbi/contracts";
 import { useNavigate, useParams } from "react-router-dom";
 import { AlertTriangle, ArrowLeft, CheckCircle, Clock, Loader2, Pencil } from "lucide-react";
@@ -26,58 +25,13 @@ import { toast } from "@/components/ui/sonner";
 import { useAuth } from "@/contexts/AuthContext";
 import { KPI_DEFINITIONS } from "@/data/kpi-definitions";
 import { ApiError } from "@/lib/api-client";
-import { useUpdateVehicleCorrections, useVehicleDetail } from "@/hooks/api/use-platform";
-
-const DATE_FIELDS = [
-  "bg_date",
-  "shipment_etd_pkg",
-  "date_received_by_outlet",
-  "reg_date",
-  "delivery_date",
-  "disb_date",
-] as const satisfies readonly VehicleCorrectionField[];
-
-const TEXT_FIELDS = [
-  "payment_method",
-  "salesman_name",
-  "customer_name",
-  "remark",
-] as const satisfies readonly VehicleCorrectionField[];
-
-const EDITABLE_FIELDS = [...DATE_FIELDS, ...TEXT_FIELDS] as const;
-
-type EditableVehicleField = typeof EDITABLE_FIELDS[number];
-
-type VehicleCorrectionDraft = Omit<UpdateVehicleCorrectionsRequest, "reason">;
-
-function buildDraft(vehicle?: VehicleCanonical): VehicleCorrectionDraft {
-  return {
-    bg_date: vehicle?.bg_date ?? "",
-    shipment_etd_pkg: vehicle?.shipment_etd_pkg ?? "",
-    date_received_by_outlet: vehicle?.date_received_by_outlet ?? "",
-    reg_date: vehicle?.reg_date ?? "",
-    delivery_date: vehicle?.delivery_date ?? "",
-    disb_date: vehicle?.disb_date ?? "",
-    payment_method: vehicle?.payment_method ?? "",
-    salesman_name: vehicle?.salesman_name ?? "",
-    customer_name: vehicle?.customer_name ?? "",
-    remark: vehicle?.remark ?? "",
-  };
-}
-
-function getVehicleFieldValue(vehicle: VehicleCanonical, field: EditableVehicleField) {
-  return (vehicle[field] as string | undefined) ?? "";
-}
-
-function normalizeDraftValue(field: EditableVehicleField, value: string) {
-  if (field === "remark") {
-    return value.trim();
-  }
-  if (field === "payment_method" || field === "salesman_name" || field === "customer_name") {
-    return value.trim();
-  }
-  return value.trim();
-}
+import {
+  buildVehicleCorrectionDraft,
+  buildVehicleCorrectionUpdate,
+  VEHICLE_CORRECTION_DATE_FIELDS,
+  type VehicleCorrectionDraft,
+} from "@/lib/vehicle-corrections-form";
+import { useExplorerMappings, useUpdateVehicleCorrections, useVehicleDetail } from "@/hooks/api/use-platform";
 
 function formatCorrectionTimestamp(value: string) {
   const parsed = new Date(value);
@@ -91,14 +45,16 @@ export default function VehicleDetail() {
   const { chassisNo } = useParams<{ chassisNo: string }>();
   const navigate = useNavigate();
   const { hasRole } = useAuth();
-  const canEditCorrections = hasRole(["company_admin", "super_admin", "director"]);
+  const canEditCorrections = hasRole(VEHICLE_CORRECTION_EDITOR_ROLES);
   const { data, error, isError, isLoading, refetch } = useVehicleDetail(chassisNo);
+  const mappingsQuery = useExplorerMappings();
   const updateCorrections = useUpdateVehicleCorrections();
   const vehicle = data?.vehicle;
+  const mappings = mappingsQuery.data;
   const issues = data?.issues ?? [];
   const corrections = data?.corrections ?? [];
   const [isDialogOpen, setIsDialogOpen] = React.useState(false);
-  const [draft, setDraft] = React.useState<VehicleCorrectionDraft>(buildDraft());
+  const [draft, setDraft] = React.useState<VehicleCorrectionDraft>(buildVehicleCorrectionDraft());
   const [reason, setReason] = React.useState("");
 
   React.useEffect(() => {
@@ -106,9 +62,37 @@ export default function VehicleDetail() {
       return;
     }
 
-    setDraft(buildDraft(vehicle));
+    setDraft(buildVehicleCorrectionDraft(vehicle));
     setReason("");
   }, [isDialogOpen, vehicle]);
+
+  const branchSelectOptions = React.useMemo(() => {
+    const options = new Map<string, string>();
+    for (const item of mappings?.branches ?? []) {
+      options.set(item.rawValue, item.branchName ? `${item.rawValue} - ${item.branchName}` : item.rawValue);
+    }
+
+    const currentValue = vehicle?.branch_code?.trim();
+    if (currentValue && !options.has(currentValue)) {
+      options.set(currentValue, currentValue);
+    }
+
+    return [...options.entries()].map(([value, label]) => ({ value, label }));
+  }, [mappings, vehicle?.branch_code]);
+
+  const paymentSelectOptions = React.useMemo(() => {
+    const options = new Map<string, string>();
+    for (const item of mappings?.paymentOptions ?? []) {
+      options.set(item.value, item.label);
+    }
+
+    const currentValue = vehicle?.payment_method?.trim();
+    if (currentValue && !options.has(currentValue)) {
+      options.set(currentValue, currentValue);
+    }
+
+    return [...options.entries()].map(([value, label]) => ({ value, label }));
+  }, [mappings, vehicle?.payment_method]);
 
   if (isLoading) {
     return <div className="text-sm text-muted-foreground">Loading vehicle detail...</div>;
@@ -165,19 +149,7 @@ export default function VehicleDetail() {
       return;
     }
 
-    const input: UpdateVehicleCorrectionsRequest = { reason: trimmedReason };
-    let changedCount = 0;
-
-    for (const field of EDITABLE_FIELDS) {
-      const nextValue = normalizeDraftValue(field, draft[field] ?? "");
-      const currentValue = normalizeDraftValue(field, getVehicleFieldValue(vehicle, field));
-      if (nextValue === currentValue) {
-        continue;
-      }
-
-      input[field] = nextValue;
-      changedCount += 1;
-    }
+    const { input, changedCount } = buildVehicleCorrectionUpdate(vehicle, draft, trimmedReason);
 
     if (changedCount === 0) {
       toast.info("No vehicle changes to save.");
@@ -360,7 +332,7 @@ export default function VehicleDetail() {
 
           <div className="space-y-5">
             <div className="grid gap-4 md:grid-cols-2">
-              {DATE_FIELDS.map((field) => (
+              {VEHICLE_CORRECTION_DATE_FIELDS.map((field) => (
                 <div key={field} className="space-y-2">
                   <Label htmlFor={`vehicle-${field}`}>{VEHICLE_CORRECTION_FIELD_LABELS[field]}</Label>
                   <Input
@@ -375,15 +347,23 @@ export default function VehicleDetail() {
             </div>
 
             <div className="grid gap-4 md:grid-cols-2">
-              {TEXT_FIELDS.filter((field) => field !== "remark").map((field) => (
+              {VEHICLE_CORRECTION_SELECT_FIELDS.map((field) => (
                 <div key={field} className="space-y-2">
                   <Label htmlFor={`vehicle-${field}`}>{VEHICLE_CORRECTION_FIELD_LABELS[field]}</Label>
-                  <Input
+                  <select
                     id={`vehicle-${field}`}
                     value={draft[field] ?? ""}
                     onChange={(event) => setDraft((current) => ({ ...current, [field]: event.target.value }))}
                     disabled={updateCorrections.isPending}
-                  />
+                    className="h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <option value="">{field === "branch_code" ? "Select branch" : "Select payment method"}</option>
+                    {(field === "branch_code" ? branchSelectOptions : paymentSelectOptions).map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
                 </div>
               ))}
             </div>

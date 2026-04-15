@@ -12,12 +12,14 @@ import type {
   ExplorerResult,
   ExportJob,
   ExportSubscription,
+  ExplorerMappingsResponse,
   ImportBatch,
   ImportPublishMode,
   NavigationItem,
   Notification,
   SlaPolicy,
   UpdateVehicleCorrectionsRequest,
+  UpdateExplorerMappingsRequest,
   User,
   VehicleCanonical,
   VehicleCorrection,
@@ -98,6 +100,8 @@ export interface PlatformRepository {
     input: { name: string; query: ExplorerQuery },
   ): Awaitable<ExplorerSavedView>;
   deleteExplorerSavedView(user: User, savedViewId: string): Awaitable<void>;
+  listExplorerMappings(user: User): Awaitable<ExplorerMappingsResponse>;
+  saveExplorerMappings(user: User, input: UpdateExplorerMappingsRequest): Awaitable<ExplorerMappingsResponse>;
   listSlas(user: User): Awaitable<SlaPolicy[]>;
   updateSla(user: User, id: string, slaDays: number): Awaitable<SlaPolicy>;
   getSummary(

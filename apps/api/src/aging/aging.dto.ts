@@ -1,6 +1,167 @@
 import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
-import { IsInt, IsOptional, IsString, Max, MaxLength, Min, MinLength } from "class-validator";
-import type { ExplorerQuery, UpdateVehicleCorrectionsRequest, VehicleCanonical } from "@flcbi/contracts";
+import { Type } from "class-transformer";
+import {
+  IsBoolean,
+  IsInt,
+  IsObject,
+  IsOptional,
+  IsString,
+  Max,
+  MaxLength,
+  Min,
+  MinLength,
+  ValidateNested,
+} from "class-validator";
+import type {
+  ExplorerColumnFilterSet,
+  ExplorerDateRangeFilter,
+  ExplorerFilterSet,
+  ExplorerNumberRangeFilter,
+  ExplorerQuery,
+  UpdateVehicleCorrectionsRequest,
+} from "@flcbi/contracts";
+
+export class ExplorerDateRangeDto implements ExplorerDateRangeFilter {
+  @ApiPropertyOptional({ description: "Lower bound in YYYY-MM-DD format." })
+  @IsOptional()
+  @IsString()
+  @MaxLength(10)
+  from?: string;
+
+  @ApiPropertyOptional({ description: "Upper bound in YYYY-MM-DD format." })
+  @IsOptional()
+  @IsString()
+  @MaxLength(10)
+  to?: string;
+}
+
+export class ExplorerNumberRangeDto implements ExplorerNumberRangeFilter {
+  @ApiPropertyOptional({ description: "Inclusive lower bound." })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  min?: number;
+
+  @ApiPropertyOptional({ description: "Inclusive upper bound." })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  max?: number;
+}
+
+export class ExplorerFilterSetDto implements ExplorerFilterSet {
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  chassisNo?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  salesmanName?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(160)
+  customerName?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  remark?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsBoolean()
+  isD2D?: boolean;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => ExplorerDateRangeDto)
+  bgDate?: ExplorerDateRangeDto;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => ExplorerDateRangeDto)
+  shipmentEtdPkg?: ExplorerDateRangeDto;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => ExplorerDateRangeDto)
+  dateReceivedByOutlet?: ExplorerDateRangeDto;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => ExplorerDateRangeDto)
+  regDate?: ExplorerDateRangeDto;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => ExplorerDateRangeDto)
+  deliveryDate?: ExplorerDateRangeDto;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => ExplorerDateRangeDto)
+  disbDate?: ExplorerDateRangeDto;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => ExplorerNumberRangeDto)
+  bgToDelivery?: ExplorerNumberRangeDto;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => ExplorerNumberRangeDto)
+  bgToShipmentEtd?: ExplorerNumberRangeDto;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => ExplorerNumberRangeDto)
+  etdToOutletReceived?: ExplorerNumberRangeDto;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => ExplorerNumberRangeDto)
+  outletReceivedToReg?: ExplorerNumberRangeDto;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => ExplorerNumberRangeDto)
+  regToDelivery?: ExplorerNumberRangeDto;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => ExplorerNumberRangeDto)
+  bgToDisb?: ExplorerNumberRangeDto;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => ExplorerNumberRangeDto)
+  deliveryToDisb?: ExplorerNumberRangeDto;
+
+  @ApiPropertyOptional({ description: "Arbitrary per-column filters keyed by explorer column name." })
+  @IsOptional()
+  @IsObject()
+  columnFilters?: ExplorerColumnFilterSet;
+}
 
 export class ExplorerQueryDto implements ExplorerQuery {
   @ApiPropertyOptional()
@@ -36,11 +197,19 @@ export class ExplorerQueryDto implements ExplorerQuery {
 
   @ApiPropertyOptional()
   @IsOptional()
-  sortField?: keyof VehicleCanonical;
+  @IsString()
+  @MaxLength(120)
+  sortField?: string;
 
   @ApiPropertyOptional({ default: "desc" })
   @IsOptional()
   sortDirection?: "asc" | "desc" = "desc";
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => ExplorerFilterSetDto)
+  filters?: ExplorerFilterSetDto;
 }
 
 export class UpdateSlaDto {
@@ -99,6 +268,12 @@ export class UpdateVehicleCorrectionsDto implements UpdateVehicleCorrectionsRequ
   @IsString()
   @MaxLength(80)
   payment_method?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  branch_code?: string;
 
   @ApiPropertyOptional()
   @IsOptional()

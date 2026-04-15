@@ -170,6 +170,8 @@ export interface VehicleRaw {
   reg_no?: string;
   invoice_no?: string;
   obr?: string;
+  source_headers?: string[];
+  source_values?: Record<string, string | number | boolean | null>;
 }
 
 export interface VehicleCanonical {
@@ -212,6 +214,26 @@ export interface VehicleCanonical {
   outlet_received_to_delivery?: number | null;
   bg_to_disb?: number | null;
   delivery_to_disb?: number | null;
+}
+
+export interface WorkbookExplorerRow extends VehicleCanonical {
+  row_number?: number;
+  canEditCorrections?: boolean;
+  source_headers?: string[];
+  source_values?: Record<string, string | number | boolean | null>;
+}
+
+export type WorkbookExplorerColumnKind = "text" | "select" | "date" | "number" | "boolean";
+
+export interface WorkbookExplorerColumn {
+  key: string;
+  label: string;
+  kind: WorkbookExplorerColumnKind;
+  width: string;
+  editable?: boolean;
+  sticky?: "left" | "right";
+  filterable?: boolean;
+  options?: string[];
 }
 
 export interface MetricDefinition {
@@ -355,6 +377,42 @@ export interface FilterOptions {
   payments: string[];
 }
 
+export interface ExplorerDateRangeFilter {
+  from?: string;
+  to?: string;
+}
+
+export interface ExplorerNumberRangeFilter {
+  min?: number;
+  max?: number;
+}
+
+export type ExplorerColumnFilterValue = string | boolean | ExplorerDateRangeFilter | ExplorerNumberRangeFilter;
+
+export type ExplorerColumnFilterSet = Record<string, ExplorerColumnFilterValue | undefined>;
+
+export interface ExplorerFilterSet {
+  chassisNo?: string;
+  salesmanName?: string;
+  customerName?: string;
+  remark?: string;
+  isD2D?: boolean;
+  bgDate?: ExplorerDateRangeFilter;
+  shipmentEtdPkg?: ExplorerDateRangeFilter;
+  dateReceivedByOutlet?: ExplorerDateRangeFilter;
+  regDate?: ExplorerDateRangeFilter;
+  deliveryDate?: ExplorerDateRangeFilter;
+  disbDate?: ExplorerDateRangeFilter;
+  bgToDelivery?: ExplorerNumberRangeFilter;
+  bgToShipmentEtd?: ExplorerNumberRangeFilter;
+  etdToOutletReceived?: ExplorerNumberRangeFilter;
+  outletReceivedToReg?: ExplorerNumberRangeFilter;
+  regToDelivery?: ExplorerNumberRangeFilter;
+  bgToDisb?: ExplorerNumberRangeFilter;
+  deliveryToDisb?: ExplorerNumberRangeFilter;
+  columnFilters?: ExplorerColumnFilterSet;
+}
+
 export type ExplorerPreset =
   | "open_stock"
   | "pending_shipment"
@@ -428,14 +486,16 @@ export interface ExplorerQuery {
   model?: string;
   payment?: string;
   preset?: ExplorerPreset;
+  filters?: ExplorerFilterSet;
   page: number;
   pageSize: number;
-  sortField?: keyof VehicleCanonical;
+  sortField?: string;
   sortDirection?: "asc" | "desc";
 }
 
 export interface ExplorerResult {
-  items: VehicleCanonical[];
+  items: WorkbookExplorerRow[];
+  columns: WorkbookExplorerColumn[];
   total: number;
   page: number;
   pageSize: number;

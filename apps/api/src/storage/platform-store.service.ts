@@ -6,6 +6,7 @@ import {
   buildAgingSummary,
   buildVehicleExplorerExportRows,
   compareMetricValue,
+  describeExplorerQuery,
   type Branch,
   createDefaultDashboardPreferences,
   createDefaultSlaPolicies,
@@ -18,10 +19,12 @@ import {
   matchesExplorerPreset,
   navigationItems,
   normalizeExecutiveDashboardMetricIds,
+  normalizeExplorerQuery,
   platformModules,
   publishCanonical,
   queryVehicles,
   parseWorkbook,
+  VEHICLE_CORRECTION_EDITOR_ROLES,
   type AgingSummary,
   type AlertRule,
   type AuditEvent,
@@ -31,6 +34,7 @@ import {
   type ExplorerPreset,
   type ExplorerSavedView,
   type ExplorerResult,
+  type ExplorerMappingsResponse,
   type ImportBatch,
   type ImportPublishMode,
   type NavigationItem,
@@ -39,9 +43,11 @@ import {
   type SlaPolicy,
   sortVehiclesForExplorer,
   type UpdateVehicleCorrectionsRequest,
+  type UpdateExplorerMappingsRequest,
   type User,
   type VehicleCanonical,
   type VehicleCorrection,
+  type WorkbookExplorerRow,
   VEHICLE_CORRECTION_FIELDS,
   VEHICLE_CORRECTION_FIELD_LABELS,
   type VehicleCorrectionField,
@@ -77,6 +83,20 @@ interface VehicleCorrectionRecord {
   item: VehicleCorrection;
 }
 
+interface ExplorerBranchMappingRecord {
+  rawValue: string;
+  branchId: string;
+  approved: boolean;
+  updatedAt: string;
+}
+
+interface ExplorerPaymentMappingRecord {
+  rawValue: string;
+  canonicalValue: string;
+  approved: boolean;
+  updatedAt: string;
+}
+
 @Injectable()
 export class PlatformStoreService implements PlatformRepository {
   private readonly users: User[] = [];
@@ -92,6 +112,8 @@ export class PlatformStoreService implements PlatformRepository {
   private readonly exports = new Map<string, ExportRecord>();
   private readonly exportSubscriptions = new Map<string, ExportSubscriptionRecord>();
   private readonly vehicleCorrections = new Map<string, VehicleCorrectionRecord>();
+  private readonly explorerBranchMappingsByCompany = new Map<string, ExplorerBranchMappingRecord[]>();
+  private readonly explorerPaymentMappingsByCompany = new Map<string, ExplorerPaymentMappingRecord[]>();
   private readonly branches: Branch[] = [];
   private vehicles: VehicleCanonical[] = [];
   private imports: ImportBatch[] = [];
@@ -322,12 +344,12 @@ export class PlatformStoreService implements PlatformRepository {
   }
 
   async createImportPreview(user: User, fileName: string, fileBuffer: Buffer) {
-    const parsed = parseWorkbook(
-      fileBuffer.buffer.slice(
-        fileBuffer.byteOffset,
-        fileBuffer.byteOffset + fileBuffer.byteLength,
-      ),
-    );
+      const parsed = await parseWorkbook(
+        fileBuffer.buffer.slice(
+          fileBuffer.byteOffset,
+          fileBuffer.byteOffset + fileBuffer.byteLength,
+        ),
+      );
     const id = `batch-${Date.now()}`;
     const storageKey = `imports/${id}/${fileName}`;
     await this.objectStorage.putObject(storageKey, fileBuffer);
@@ -473,7 +495,7 @@ export class PlatformStoreService implements PlatformRepository {
       entityId: subscriptionId,
       userId: user.id,
       userName: user.name,
-      details: `Created daily export subscription for ${describeExportQuery(normalizedQuery)}`,
+      details: `Created daily export subscription for ${describeExplorerQuery(normalizedQuery)}`,
     });
     return item;
   }
@@ -491,7 +513,7 @@ export class PlatformStoreService implements PlatformRepository {
       entityId: subscriptionId,
       userId: user.id,
       userName: user.name,
-      details: `Deleted daily export subscription for ${describeExportQuery(record.item.query)}`,
+      details: `Deleted daily export subscription for ${describeExplorerQuery(record.item.query)}`,
     });
   }
 
@@ -548,11 +570,8 @@ export class PlatformStoreService implements PlatformRepository {
 
   private async generateExplorerExportRecord(user: User, exportId: string, query: ExplorerQuery): Promise<ExportRecord> {
     const normalizedQuery = normalizeExportQuery(query);
-    const visibleVehicles = sortVehiclesForExplorer(
-      filterVehiclesForExplorer(this.getVisibleVehicles(user), normalizedQuery),
-      normalizedQuery,
-    );
-    const rows = buildVehicleExplorerExportRows(visibleVehicles);
+    const explorer = this.queryExplorer(user, normalizedQuery);
+    const rows = buildVehicleExplorerExportRows(explorer.items, explorer.columns);
     const content = Buffer.from(serializeCsvRows(rows), "utf8");
     const requestedAt = new Date().toISOString();
     const fileName = buildExportFileName(requestedAt);
@@ -570,7 +589,7 @@ export class PlatformStoreService implements PlatformRepository {
         status: "completed",
         format: "csv",
         kind: "vehicle_explorer_csv",
-        totalRows: visibleVehicles.length,
+        totalRows: explorer.total,
         query: normalizedQuery,
         storageKey,
         completedAt: requestedAt,
@@ -678,6 +697,230 @@ export class PlatformStoreService implements PlatformRepository {
     });
   }
 
+  listExplorerMappings(user: User): ExplorerMappingsResponse {
+    return this.buildExplorerMappings(user.companyId);
+  }
+
+  saveExplorerMappings(user: User, input: UpdateExplorerMappingsRequest): ExplorerMappingsResponse {
+    if (!canManageExplorerMappings(user)) {
+      throw new ForbiddenException("You do not have permission to manage mappings");
+    }
+
+    const timestamp = new Date().toISOString();
+    const branchChanges = input.branches ?? [];
+    const paymentChanges = input.payments ?? [];
+
+    if (branchChanges.length === 0 && paymentChanges.length === 0) {
+      return this.buildExplorerMappings(user.companyId);
+    }
+
+    if (branchChanges.length > 0) {
+      const records = this.explorerBranchMappingsByCompany.get(user.companyId) ?? [];
+      for (const change of branchChanges) {
+        const existing = records.find((record) => record.rawValue.toLowerCase() === change.rawValue.trim().toLowerCase());
+        const nextRecord: ExplorerBranchMappingRecord = {
+          rawValue: change.rawValue.trim(),
+          branchId: change.branchId,
+          approved: change.approved ?? true,
+          updatedAt: timestamp,
+        };
+        if (existing) {
+          Object.assign(existing, nextRecord);
+        } else {
+          records.push(nextRecord);
+        }
+        this.backfillBranchMapping(user.companyId, nextRecord.rawValue, nextRecord.branchId);
+      }
+      this.explorerBranchMappingsByCompany.set(user.companyId, records);
+    }
+
+    if (paymentChanges.length > 0) {
+      const records = this.explorerPaymentMappingsByCompany.get(user.companyId) ?? [];
+      for (const change of paymentChanges) {
+        const existing = records.find((record) => record.rawValue.toLowerCase() === change.rawValue.trim().toLowerCase());
+        const nextRecord: ExplorerPaymentMappingRecord = {
+          rawValue: change.rawValue.trim(),
+          canonicalValue: change.canonicalValue.trim(),
+          approved: change.approved ?? true,
+          updatedAt: timestamp,
+        };
+        if (existing) {
+          Object.assign(existing, nextRecord);
+        } else {
+          records.push(nextRecord);
+        }
+        this.backfillPaymentMapping(user.companyId, nextRecord.rawValue, nextRecord.canonicalValue);
+      }
+      this.explorerPaymentMappingsByCompany.set(user.companyId, records);
+    }
+
+    this.addAuditEvent({
+      action: "explorer_mappings_updated",
+      entity: "mapping_rule",
+      entityId: user.companyId,
+      userId: user.id,
+      userName: user.name,
+      details: `Updated ${branchChanges.length} branch and ${paymentChanges.length} payment mappings`,
+    });
+
+    return this.buildExplorerMappings(user.companyId);
+  }
+
+  private buildExplorerMappings(companyId: string): ExplorerMappingsResponse {
+    const branches = this.branches
+      .filter((branch) => branch.companyId === companyId)
+      .sort((left, right) => left.code.localeCompare(right.code));
+    const branchOptions = branches.map((branch) => ({
+      value: branch.id,
+      label: `${branch.code} - ${branch.name}`,
+    }));
+    const paymentOptions = this.buildExplorerPaymentOptions(companyId);
+    const observedBranchCounts = this.collectExplorerMappingCounts("branch_code");
+    const observedPaymentCounts = this.collectExplorerMappingCounts("payment_method");
+    const branchRecords = this.explorerBranchMappingsByCompany.get(companyId) ?? [];
+    const paymentRecords = this.explorerPaymentMappingsByCompany.get(companyId) ?? [];
+
+    const branchRecordsByRaw = new Map(branchRecords.map((record) => [record.rawValue.toLowerCase(), record]));
+    const paymentRecordsByRaw = new Map(paymentRecords.map((record) => [record.rawValue.toLowerCase(), record]));
+
+    const branchValues = new Set([
+      ...observedBranchCounts.keys(),
+      ...branchRecords.map((record) => record.rawValue),
+    ]);
+    const paymentValues = new Set([
+      ...observedPaymentCounts.keys(),
+      ...paymentRecords.map((record) => record.rawValue),
+    ]);
+
+    return {
+      branches: [...branchValues]
+        .sort((left, right) => left.localeCompare(right))
+        .map((rawValue) => {
+          const record = branchRecordsByRaw.get(rawValue.toLowerCase());
+          const suggestedBranchId = this.suggestBranchId(companyId, rawValue);
+          const branch = branches.find((item) => item.id === (record?.branchId ?? suggestedBranchId));
+          return {
+            rawValue,
+            branchId: record?.branchId ?? suggestedBranchId ?? branchOptions[0]?.value ?? "",
+            branchCode: branch?.code ?? "",
+            branchName: branch?.name ?? "",
+            approved: record?.approved ?? false,
+            sourceCount: observedBranchCounts.get(rawValue) ?? 0,
+            suggestedBranchId,
+          };
+        }),
+      payments: [...paymentValues]
+        .sort((left, right) => left.localeCompare(right))
+        .map((rawValue) => {
+          const record = paymentRecordsByRaw.get(rawValue.toLowerCase());
+          const suggestedCanonicalValue = this.suggestPaymentValue(rawValue, paymentOptions);
+          return {
+            rawValue,
+            canonicalValue: record?.canonicalValue ?? suggestedCanonicalValue ?? paymentOptions[0]?.value ?? "",
+            approved: record?.approved ?? false,
+            sourceCount: observedPaymentCounts.get(rawValue) ?? 0,
+            suggestedCanonicalValue,
+          };
+        }),
+      branchOptions,
+      paymentOptions,
+    };
+  }
+
+  private collectExplorerMappingCounts(field: "branch_code" | "payment_method") {
+    const counts = new Map<string, number>();
+    for (const preview of this.importPreviews.values()) {
+      for (const row of preview.rows) {
+        const rawValue = field === "branch_code" ? row.branch_code : row.payment_method;
+        const normalized = rawValue?.trim();
+        if (!normalized) {
+          continue;
+        }
+        counts.set(normalized, (counts.get(normalized) ?? 0) + 1);
+      }
+    }
+    return counts;
+  }
+
+  private buildExplorerPaymentOptions(companyId: string) {
+    const observedValues = new Set<string>();
+    for (const vehicle of this.vehicles) {
+      const value = vehicle.payment_method?.trim();
+      if (value) {
+        observedValues.add(value);
+      }
+    }
+    for (const record of this.explorerPaymentMappingsByCompany.get(companyId) ?? []) {
+      const value = record.canonicalValue.trim();
+      if (value) {
+        observedValues.add(value);
+      }
+    }
+
+    return [...observedValues]
+      .sort((left, right) => left.localeCompare(right))
+      .map((value) => ({ value, label: value }));
+  }
+
+  private suggestBranchId(companyId: string, rawValue: string) {
+    const normalized = rawValue.trim().toLowerCase();
+    if (!normalized) {
+      return undefined;
+    }
+
+    const branch = this.branches.find(
+      (candidate) =>
+        candidate.companyId === companyId &&
+        (candidate.code.toLowerCase() === normalized || candidate.name.toLowerCase() === normalized),
+    );
+    return branch?.id;
+  }
+
+  private suggestPaymentValue(rawValue: string, paymentOptions: Array<{ value: string; label: string }>) {
+    const normalized = rawValue.trim().toLowerCase();
+    if (!normalized) {
+      return undefined;
+    }
+
+    const exact = paymentOptions.find((option) => option.value.toLowerCase() === normalized);
+    if (exact) {
+      return exact.value;
+    }
+
+    const titleCase = rawValue
+      .trim()
+      .toLowerCase()
+      .split(/[\s_-]+/)
+      .filter(Boolean)
+      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+      .join(" ");
+    return titleCase || undefined;
+  }
+
+  private backfillBranchMapping(companyId: string, rawValue: string, branchId: string) {
+    const branch = this.branches.find((candidate) => candidate.id === branchId && candidate.companyId === companyId);
+    if (!branch) {
+      throw new BadRequestException(`Branch ${branchId} not found`);
+    }
+
+    const normalizedRaw = rawValue.trim().toLowerCase();
+    for (const vehicle of this.vehicles) {
+      if ((vehicle.branch_code ?? "").trim().toLowerCase() === normalizedRaw) {
+        vehicle.branch_code = branch.code;
+      }
+    }
+  }
+
+  private backfillPaymentMapping(_companyId: string, rawValue: string, canonicalValue: string) {
+    const normalizedRaw = rawValue.trim().toLowerCase();
+    const normalizedCanonical = canonicalValue.trim();
+    for (const vehicle of this.vehicles) {
+      if ((vehicle.payment_method ?? "").trim().toLowerCase() === normalizedRaw) {
+        vehicle.payment_method = normalizedCanonical;
+      }
+    }
+  }
+
   listSlas(user: User) {
     return [...this.getCompanySlas(user.companyId)];
   }
@@ -718,7 +961,7 @@ export class PlatformStoreService implements PlatformRepository {
   }
 
   queryExplorer(user: User, query: ExplorerQuery): ExplorerResult {
-    return queryVehicles(this.getVisibleVehicles(user), query);
+    return queryVehicles(this.getVisibleWorkbookRows(user), query);
   }
 
   getVehicle(user: User, chassisNo: string) {
@@ -851,6 +1094,74 @@ export class PlatformStoreService implements PlatformRepository {
       .filter((vehicle): vehicle is VehicleCanonical => Boolean(vehicle));
   }
 
+  private getVisibleWorkbookRows(user: User): WorkbookExplorerRow[] {
+    const previewRows = this.imports.flatMap((item) => this.importPreviews.get(item.id)?.rows ?? []);
+    const editableChassisNos = new Set(this.vehicles.map((vehicle) => vehicle.chassis_no));
+    const correctionsByChassis = new Map<string, VehicleCorrection[]>();
+    for (const row of previewRows) {
+      correctionsByChassis.set(row.chassis_no, this.listVehicleCorrections(user.companyId, row.chassis_no));
+    }
+
+    const visibleRows = previewRows
+      .map((row) => {
+        const workbookRow = this.mapWorkbookRow(row);
+        return {
+          ...(applyVehicleCorrections(workbookRow, correctionsByChassis.get(row.chassis_no) ?? []) as WorkbookExplorerRow),
+          canEditCorrections: editableChassisNos.has(workbookRow.chassis_no),
+        };
+      })
+      .filter((row) => {
+        if (user.role === "super_admin" || user.role === "company_admin" || user.role === "director" || user.role === "analyst") {
+          return true;
+        }
+        if (user.branchId) {
+          return row.branch_code === user.branchId;
+        }
+        return true;
+      });
+
+    return visibleRows;
+  }
+
+  private mapWorkbookRow(row: VehicleRaw): WorkbookExplorerRow {
+    const workbookRow: WorkbookExplorerRow = {
+      id: row.id,
+      row_number: row.row_number,
+      chassis_no: row.chassis_no,
+      bg_date: row.bg_date,
+      shipment_etd_pkg: row.shipment_etd_pkg,
+      shipment_eta_kk_twu_sdk: row.shipment_eta_kk_twu_sdk,
+      date_received_by_outlet: row.date_received_by_outlet,
+      reg_date: row.reg_date,
+      delivery_date: row.delivery_date,
+      disb_date: row.disb_date,
+      branch_code: row.branch_code ?? "UNKNOWN",
+      model: row.model ?? "Unknown",
+      payment_method: row.payment_method ?? "Unknown",
+      salesman_name: row.salesman_name ?? "Unknown",
+      customer_name: row.customer_name ?? "Unknown",
+      remark: row.remark,
+      vaa_date: row.vaa_date,
+      full_payment_date: row.full_payment_date,
+      is_d2d: row.is_d2d ?? false,
+      import_batch_id: row.import_batch_id,
+      source_row_id: row.id,
+      variant: row.variant,
+      dealer_transfer_price: row.dealer_transfer_price,
+      full_payment_type: row.full_payment_type,
+      shipment_name: row.shipment_name,
+      lou: row.lou,
+      contra_sola: row.contra_sola,
+      reg_no: row.reg_no,
+      invoice_no: row.invoice_no,
+      obr: row.obr,
+      source_headers: row.source_headers,
+      source_values: row.source_values,
+    };
+
+    return workbookRow;
+  }
+
   private listVehicleCorrections(companyId: string, chassisNo: string) {
     return [...this.vehicleCorrections.values()]
       .filter((record) => record.companyId === companyId && record.item.chassisNo === chassisNo)
@@ -965,16 +1276,11 @@ function describeComparator(comparator: AlertRule["comparator"]) {
 }
 
 function normalizeExportQuery(query: ExplorerQuery): ExplorerQuery {
+  const normalized = normalizeExplorerQuery(query);
   return {
-    search: query.search?.trim() || undefined,
-    branch: query.branch ?? "all",
-    model: query.model ?? "all",
-    payment: query.payment ?? "all",
-    preset: query.preset,
+    ...normalized,
     page: 1,
     pageSize: 100,
-    sortField: query.sortField ?? "bg_to_delivery",
-    sortDirection: query.sortDirection ?? "desc",
   };
 }
 
@@ -987,37 +1293,24 @@ function buildExportSubscriptionFingerprint(query: ExplorerQuery) {
   return `daily:${JSON.stringify(normalizeExportQuery(query))}`;
 }
 
-function describeExportQuery(query: ExplorerQuery) {
-  const parts = [
-    query.search ? `search=${query.search}` : null,
-    query.branch && query.branch !== "all" ? `branch=${query.branch}` : null,
-    query.model && query.model !== "all" ? `model=${query.model}` : null,
-    query.payment && query.payment !== "all" ? `payment=${query.payment}` : null,
-    query.preset ? `preset=${query.preset}` : null,
-  ].filter(Boolean);
-
-  return parts.length > 0 ? parts.join(", ") : "all vehicles";
-}
-
 function canViewCompanyWideExports(user: User) {
   return ["super_admin", "company_admin", "director"].includes(user.role);
 }
 
 function canManageVehicleCorrections(user: User) {
-  return ["super_admin", "company_admin", "director"].includes(user.role);
+  return VEHICLE_CORRECTION_EDITOR_ROLES.includes(user.role);
+}
+
+function canManageExplorerMappings(user: User) {
+  return ["super_admin", "company_admin"].includes(user.role);
 }
 
 function normalizeExplorerSavedViewQuery(query: ExplorerQuery): ExplorerQuery {
+  const normalized = normalizeExplorerQuery(query);
   return {
-    search: query.search?.trim() || undefined,
-    branch: query.branch ?? "all",
-    model: query.model ?? "all",
-    payment: query.payment ?? "all",
-    preset: query.preset,
+    ...normalized,
     page: 1,
     pageSize: query.pageSize ? Math.min(Math.max(query.pageSize, 1), 100) : 50,
-    sortField: query.sortField ?? "bg_to_delivery",
-    sortDirection: query.sortDirection ?? "desc",
   };
 }
 
@@ -1040,7 +1333,7 @@ function normalizeVehicleCorrectionValue(field: VehicleCorrectionField, value: s
   if (field === "remark") {
     return normalized.length > 0 ? normalized : null;
   }
-  if (field === "payment_method" || field === "salesman_name" || field === "customer_name") {
+  if (field === "branch_code" || field === "payment_method" || field === "salesman_name" || field === "customer_name") {
     if (!normalized) {
       throw new BadRequestException(`${VEHICLE_CORRECTION_FIELD_LABELS[field]} cannot be blank`);
     }

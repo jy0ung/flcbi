@@ -1,4 +1,12 @@
-import type { VehicleCanonical } from "./domain.js";
+import type { AppRole, VehicleCanonical } from "./domain.js";
+
+export const VEHICLE_CORRECTION_EDITOR_ROLES: readonly AppRole[] = [
+  "super_admin",
+  "company_admin",
+  "director",
+  "general_manager",
+  "manager",
+];
 
 export const VEHICLE_CORRECTION_DATE_FIELDS = [
   "bg_date",
@@ -9,8 +17,12 @@ export const VEHICLE_CORRECTION_DATE_FIELDS = [
   "disb_date",
 ] as const;
 
-export const VEHICLE_CORRECTION_TEXT_FIELDS = [
+export const VEHICLE_CORRECTION_SELECT_FIELDS = [
+  "branch_code",
   "payment_method",
+] as const;
+
+export const VEHICLE_CORRECTION_TEXT_FIELDS = [
   "salesman_name",
   "customer_name",
   "remark",
@@ -18,6 +30,7 @@ export const VEHICLE_CORRECTION_TEXT_FIELDS = [
 
 export const VEHICLE_CORRECTION_FIELDS = [
   ...VEHICLE_CORRECTION_DATE_FIELDS,
+  ...VEHICLE_CORRECTION_SELECT_FIELDS,
   ...VEHICLE_CORRECTION_TEXT_FIELDS,
 ] as const;
 
@@ -30,6 +43,7 @@ export const VEHICLE_CORRECTION_FIELD_LABELS: Record<VehicleCorrectionField, str
   reg_date: "Registration Date",
   delivery_date: "Delivery Date",
   disb_date: "Disbursement Date",
+  branch_code: "Branch",
   payment_method: "Payment Method",
   salesman_name: "Salesman",
   customer_name: "Customer",
@@ -79,6 +93,7 @@ export function applyVehicleCorrections(
   corrections: VehicleCorrectionLike[],
 ): VehicleCanonical {
   const next: VehicleCanonical = { ...vehicle };
+  const mutableNext = next as unknown as Record<string, string | undefined>;
 
   for (const correction of corrections) {
     switch (correction.field) {
@@ -88,14 +103,15 @@ export function applyVehicleCorrections(
       case "reg_date":
       case "delivery_date":
       case "disb_date":
+      case "branch_code":
       case "remark":
-        next[correction.field] = correction.value ?? undefined;
+        mutableNext[correction.field] = correction.value ?? undefined;
         break;
       case "payment_method":
       case "salesman_name":
       case "customer_name":
         if (correction.value != null) {
-          next[correction.field] = correction.value;
+          mutableNext[correction.field] = correction.value;
         }
         break;
       default: {

@@ -1,16 +1,19 @@
 import { Body, Controller, Get, Inject, Param, Patch, Post, Query } from "@nestjs/common";
 import { ApiBearerAuth, ApiTags } from "@nestjs/swagger";
-import type {
-  AgingSummaryResponse,
-  ExplorerQueryResponse,
-  QualityIssuesResponse,
-  SlaPoliciesResponse,
-  User,
-  VehicleDetailResponse,
+import {
+  VEHICLE_CORRECTION_EDITOR_ROLES,
+  type AgingSummaryResponse,
+  type ExplorerMappingsResponse,
+  type ExplorerQueryResponse,
+  type QualityIssuesResponse,
+  type SlaPoliciesResponse,
+  type User,
+  type VehicleDetailResponse,
 } from "@flcbi/contracts";
 import { CurrentUser } from "../common/current-user.decorator.js";
 import { PLATFORM_REPOSITORY, type PlatformRepository } from "../platform/platform.repository.js";
 import { ExplorerQueryDto, UpdateSlaDto, UpdateVehicleCorrectionsDto } from "./aging.dto.js";
+import { UpdateExplorerMappingsDto } from "./mappings.dto.js";
 import { Roles } from "../common/roles.decorator.js";
 import { AgingSummaryQueryDto } from "./aging-summary.dto.js";
 
@@ -44,7 +47,7 @@ export class AgingController {
     return await this.store.getVehicle(user, chassisNo);
   }
 
-  @Roles("company_admin", "super_admin", "director")
+  @Roles(...VEHICLE_CORRECTION_EDITOR_ROLES)
   @Patch("vehicles/:chassisNo/corrections")
   async updateVehicleCorrections(
     @CurrentUser() user: User,
@@ -73,5 +76,19 @@ export class AgingController {
   ): Promise<SlaPoliciesResponse> {
     await this.store.updateSla(user, id, body.slaDays);
     return { items: await this.store.listSlas(user) };
+  }
+
+  @Get("mappings")
+  async listExplorerMappings(@CurrentUser() user: User): Promise<ExplorerMappingsResponse> {
+    return await this.store.listExplorerMappings(user);
+  }
+
+  @Roles("company_admin", "super_admin")
+  @Patch("mappings")
+  async saveExplorerMappings(
+    @CurrentUser() user: User,
+    @Body() body: UpdateExplorerMappingsDto,
+  ): Promise<ExplorerMappingsResponse> {
+    return await this.store.saveExplorerMappings(user, body);
   }
 }

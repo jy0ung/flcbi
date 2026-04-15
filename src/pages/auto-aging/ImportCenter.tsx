@@ -264,11 +264,11 @@ export default function ImportCenter() {
 
           <div className="glass-panel p-12 text-center">
             <label className="cursor-pointer block">
-              <input type="file" accept=".xlsx,.xls" onChange={handleFileDrop} className="hidden" />
+              <input type="file" accept=".xlsx" onChange={handleFileDrop} className="hidden" />
               <div className="border-2 border-dashed border-border rounded-lg p-12 hover:border-primary/50 transition-colors">
                 <Upload className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
                 <p className="text-foreground font-medium mb-1">Drop your workbook here or click to browse</p>
-                <p className="text-sm text-muted-foreground">Supports .xlsx and .xls files with a "Combine Data" sheet</p>
+                <p className="text-sm text-muted-foreground">Supports .xlsx files with a "Combine Data" sheet</p>
                 <p className="text-xs text-muted-foreground mt-3">
                   Valid files are normalized and published automatically using <span className="font-medium text-foreground">{publishMode}</span> mode.
                 </p>

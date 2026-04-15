@@ -14,6 +14,7 @@ import {
   buildAlertNotificationFingerprint,
   buildAgingSummary,
   compareMetricValue,
+  describeExplorerQuery,
   type Branch,
   createDefaultDashboardPreferences,
   describeAlertComparator,
@@ -25,15 +26,18 @@ import {
   matchesExplorerPreset,
   navigationItems,
   normalizeExecutiveDashboardMetricIds,
+  normalizeExplorerQuery,
   parseWorkbook,
   publishCanonical,
   queryVehicles,
   summarizeParsedWorkbook,
+  VEHICLE_CORRECTION_EDITOR_ROLES,
   type AppRole,
   type AlertRule,
   type AuditEvent,
   type DashboardPreferences,
   type DataQualityIssue,
+  type ExplorerMappingsResponse,
   type ExplorerQuery,
   type ExplorerPreset,
   type ExplorerSavedView,
@@ -45,6 +49,7 @@ import {
   serializeCsvRows,
   type SlaPolicy,
   sortVehiclesForExplorer,
+  type UpdateExplorerMappingsRequest,
   type UpdateVehicleCorrectionsRequest,
   type User,
   type VehicleCanonical,
@@ -53,6 +58,7 @@ import {
   VEHICLE_CORRECTION_FIELD_LABELS,
   type VehicleCorrectionField,
   type VehicleRaw,
+  type WorkbookExplorerRow,
 } from "@flcbi/contracts";
 import { randomUUID } from "node:crypto";
 import { PlatformStoreService } from "../storage/platform-store.service.js";
@@ -271,6 +277,20 @@ interface ExplorerSavedViewRow {
   name: string;
   definition: { query?: ExplorerQuery } | null;
   created_at: string;
+  updated_at: string;
+}
+
+interface ExplorerBranchMappingRow {
+  raw_value: string;
+  branch_id: string;
+  approved: boolean;
+  updated_at: string;
+}
+
+interface ExplorerPaymentMappingRow {
+  raw_value: string;
+  canonical_value: string;
+  approved: boolean;
   updated_at: string;
 }
 
@@ -1171,7 +1191,7 @@ export class SupabasePlatformRepository implements PlatformRepository {
         entityId: (data as ExportSubscriptionRow).id,
         userId: user.id,
         userName: user.name,
-        details: `Created daily export subscription for ${describeExportQuery(normalizedQuery)}`,
+        details: `Created daily export subscription for ${describeExplorerQuery(normalizedQuery)}`,
       });
     });
 
@@ -1277,7 +1297,7 @@ export class SupabasePlatformRepository implements PlatformRepository {
         entityId: subscriptionId,
         userId: user.id,
         userName: user.name,
-        details: `Deleted daily export subscription for ${describeExportQuery(normalizeExportQuery(subscription.query_definition ?? defaultExportQuery()))}`,
+        details: `Deleted daily export subscription for ${describeExplorerQuery(normalizeExportQuery(subscription.query_definition ?? defaultExportQuery()))}`,
       });
     });
   }
@@ -1542,6 +1562,84 @@ export class SupabasePlatformRepository implements PlatformRepository {
     }));
   }
 
+  async listExplorerMappings(user: User): Promise<ExplorerMappingsResponse> {
+    if (!this.supabase.isConfigured()) {
+      return this.fallback.listExplorerMappings(user);
+    }
+
+    const companyId = this.requireCompanyId(user);
+    return this.buildExplorerMappings(companyId);
+  }
+
+  async saveExplorerMappings(user: User, input: UpdateExplorerMappingsRequest): Promise<ExplorerMappingsResponse> {
+    if (!this.supabase.isConfigured()) {
+      return this.fallback.saveExplorerMappings(user, input);
+    }
+    if (!canManageExplorerMappings(user)) {
+      throw new ForbiddenException("You do not have permission to manage mappings");
+    }
+
+    const companyId = this.requireCompanyId(user);
+    const branchChanges = input.branches ?? [];
+    const paymentChanges = input.payments ?? [];
+    if (branchChanges.length === 0 && paymentChanges.length === 0) {
+      return this.buildExplorerMappings(companyId);
+    }
+
+    const client = this.supabase.getAdminClient();
+
+    if (branchChanges.length > 0) {
+      const payload = branchChanges.map((change) => ({
+        company_id: companyId,
+        raw_value: change.rawValue.trim(),
+        branch_id: change.branchId,
+        approved: change.approved ?? true,
+      }));
+      const { error } = await client
+        .schema("app")
+        .from("explorer_branch_mappings")
+        .upsert(payload, { onConflict: "company_id,raw_value" });
+      if (error) {
+        throw new InternalServerErrorException(error.message);
+      }
+
+      for (const change of branchChanges) {
+        await this.backfillBranchMapping(companyId, change.rawValue.trim(), change.branchId);
+      }
+    }
+
+    if (paymentChanges.length > 0) {
+      const payload = paymentChanges.map((change) => ({
+        company_id: companyId,
+        raw_value: change.rawValue.trim(),
+        canonical_value: change.canonicalValue.trim(),
+        approved: change.approved ?? true,
+      }));
+      const { error } = await client
+        .schema("app")
+        .from("explorer_payment_mappings")
+        .upsert(payload, { onConflict: "company_id,raw_value" });
+      if (error) {
+        throw new InternalServerErrorException(error.message);
+      }
+
+      for (const change of paymentChanges) {
+        await this.backfillPaymentMapping(companyId, change.rawValue.trim(), change.canonicalValue.trim());
+      }
+    }
+
+    await this.addAuditEvent({
+      action: "explorer_mappings_updated",
+      entity: "mapping_rule",
+      entityId: companyId,
+      userId: user.id,
+      userName: user.name,
+      details: `Updated ${branchChanges.length} branch and ${paymentChanges.length} payment mappings`,
+    });
+
+    return this.buildExplorerMappings(companyId);
+  }
+
   async updateSla(user: User, id: string, slaDays: number): Promise<SlaPolicy> {
     if (!this.supabase.isConfigured()) {
       return this.fallback.updateSla(user, id, slaDays);
@@ -1619,8 +1717,17 @@ export class SupabasePlatformRepository implements PlatformRepository {
       return this.fallback.queryExplorer(user, query);
     }
 
-    const visibleVehicles = await this.fetchVisibleVehicles(user);
-    return queryVehicles(visibleVehicles, query);
+    const [visibleRows, visibleVehicles] = await Promise.all([
+      this.fetchVisibleWorkbookRows(user),
+      this.fetchVisibleVehicleRows(user),
+    ]);
+    const editableChassisNos = new Set(visibleVehicles.map((row) => row.chassis_no));
+    const workbookRows = visibleRows.map((row) => ({
+      ...row,
+      canEditCorrections: editableChassisNos.has(row.chassis_no),
+    }));
+
+    return queryVehicles(workbookRows, query);
   }
 
   async getVehicle(user: User, chassisNo: string): Promise<VehicleDetail> {
@@ -2329,7 +2436,7 @@ export class SupabasePlatformRepository implements PlatformRepository {
     });
 
     try {
-      const parsed = parseWorkbook(
+      const parsed = await parseWorkbook(
         fileBuffer.buffer.slice(
           fileBuffer.byteOffset,
           fileBuffer.byteOffset + fileBuffer.byteLength,
@@ -2907,6 +3014,31 @@ export class SupabasePlatformRepository implements PlatformRepository {
     ));
   }
 
+  private async fetchVisibleWorkbookRows(user: User) {
+    const companyId = this.requireCompanyId(user);
+    const rows = await this.fetchWorkbookRows(companyId);
+    const correctionsByChassis = await this.fetchVehicleCorrections(
+      companyId,
+      rows.map((row) => row.chassis_no),
+    );
+
+    const visibleRows = rows.map((row) => {
+      const mapped = this.mapWorkbookRow(row);
+      const corrected = applyVehicleCorrections(mapped, correctionsByChassis.get(row.chassis_no) ?? []);
+      return corrected;
+    });
+
+    if (user.role === "super_admin" || user.role === "company_admin" || user.role === "director" || user.role === "analyst") {
+      return visibleRows;
+    }
+
+    if (user.branchId) {
+      return visibleRows.filter((vehicle) => vehicle.branch_code === user.branchId);
+    }
+
+    return visibleRows;
+  }
+
   private normalizeVehicleCorrectionInput(input: UpdateVehicleCorrectionsRequest) {
     const patch: Partial<Record<VehicleCorrectionField, string | null>> = {};
 
@@ -2942,6 +3074,23 @@ export class SupabasePlatformRepository implements PlatformRepository {
     }
 
     return (data ?? []) as VehicleRow[];
+  }
+
+  private async fetchWorkbookRows(companyId: string) {
+    const client = this.supabase.getAdminClient();
+    const { data, error } = await client
+      .schema("raw")
+      .from("vehicle_import_rows")
+      .select("id, company_id, import_job_id, branch_id, source_row_number, chassis_no, model, payment_method, salesman_name, customer_name, is_d2d, bg_date, shipment_etd_pkg, shipment_eta, date_received_by_outlet, reg_date, delivery_date, disb_date, raw_payload")
+      .eq("company_id", companyId)
+      .order("created_at", { ascending: false })
+      .order("source_row_number", { ascending: true });
+
+    if (error) {
+      throw new InternalServerErrorException(error.message);
+    }
+
+    return ((data ?? []) as RawImportRow[]).map((row) => this.mapRawImportRow(row));
   }
 
   private async fetchVehicleCorrections(companyId: string, chassisNos: string[]) {
@@ -3014,6 +3163,250 @@ export class SupabasePlatformRepository implements PlatformRepository {
     }
 
     return names;
+  }
+
+  private async buildExplorerMappings(companyId: string): Promise<ExplorerMappingsResponse> {
+    const [rawRows, branches, branchMappings, paymentMappings] = await Promise.all([
+      this.fetchWorkbookRows(companyId),
+      this.fetchCompanyBranches(companyId),
+      this.fetchExplorerBranchMappings(companyId),
+      this.fetchExplorerPaymentMappings(companyId),
+    ]);
+    const branchOptions = branches
+      .sort((left, right) => left.code.localeCompare(right.code))
+      .map((branch) => ({
+        value: branch.id,
+        label: `${branch.code} - ${branch.name}`,
+      }));
+    const paymentOptions = this.buildExplorerPaymentOptions(rawRows, paymentMappings);
+    const observedBranchCounts = new Map<string, number>();
+    const observedPaymentCounts = new Map<string, number>();
+
+    for (const row of rawRows) {
+      const branchValue = row.branch_code?.trim();
+      if (branchValue) {
+        observedBranchCounts.set(branchValue, (observedBranchCounts.get(branchValue) ?? 0) + 1);
+      }
+
+      const paymentValue = row.payment_method?.trim();
+      if (paymentValue) {
+        observedPaymentCounts.set(paymentValue, (observedPaymentCounts.get(paymentValue) ?? 0) + 1);
+      }
+    }
+
+    const branchMappingsByRaw = new Map(branchMappings.map((record) => [record.raw_value.toLowerCase(), record]));
+    const paymentMappingsByRaw = new Map(paymentMappings.map((record) => [record.raw_value.toLowerCase(), record]));
+    const branchValues = new Set([
+      ...observedBranchCounts.keys(),
+      ...branchMappings.map((record) => record.raw_value),
+    ]);
+    const paymentValues = new Set([
+      ...observedPaymentCounts.keys(),
+      ...paymentMappings.map((record) => record.raw_value),
+    ]);
+
+    return {
+      branches: [...branchValues]
+        .sort((left, right) => left.localeCompare(right))
+        .map((rawValue) => {
+          const record = branchMappingsByRaw.get(rawValue.toLowerCase());
+          const suggestedBranchId = this.suggestBranchId(branches, rawValue);
+          const branch = branches.find((candidate) => candidate.id === (record?.branch_id ?? suggestedBranchId));
+          return {
+            rawValue,
+            branchId: record?.branch_id ?? suggestedBranchId ?? branchOptions[0]?.value ?? "",
+            branchCode: branch?.code ?? "",
+            branchName: branch?.name ?? "",
+            approved: record?.approved ?? false,
+            sourceCount: observedBranchCounts.get(rawValue) ?? 0,
+            suggestedBranchId,
+          };
+        }),
+      payments: [...paymentValues]
+        .sort((left, right) => left.localeCompare(right))
+        .map((rawValue) => {
+          const record = paymentMappingsByRaw.get(rawValue.toLowerCase());
+          const suggestedCanonicalValue = this.suggestPaymentValue(rawValue, paymentOptions);
+          return {
+            rawValue,
+            canonicalValue: record?.canonical_value ?? suggestedCanonicalValue ?? paymentOptions[0]?.value ?? "",
+            approved: record?.approved ?? false,
+            sourceCount: observedPaymentCounts.get(rawValue) ?? 0,
+            suggestedCanonicalValue,
+          };
+        }),
+      branchOptions,
+      paymentOptions,
+    };
+  }
+
+  private async fetchExplorerBranchMappings(companyId: string) {
+    const client = this.supabase.getAdminClient();
+    const { data, error } = await client
+      .schema("app")
+      .from("explorer_branch_mappings")
+      .select("raw_value, branch_id, approved, updated_at")
+      .eq("company_id", companyId)
+      .order("raw_value", { ascending: true });
+    if (error) {
+      throw new InternalServerErrorException(error.message);
+    }
+
+    return (data ?? []) as ExplorerBranchMappingRow[];
+  }
+
+  private async fetchExplorerPaymentMappings(companyId: string) {
+    const client = this.supabase.getAdminClient();
+    const { data, error } = await client
+      .schema("app")
+      .from("explorer_payment_mappings")
+      .select("raw_value, canonical_value, approved, updated_at")
+      .eq("company_id", companyId)
+      .order("raw_value", { ascending: true });
+    if (error) {
+      throw new InternalServerErrorException(error.message);
+    }
+
+    return (data ?? []) as ExplorerPaymentMappingRow[];
+  }
+
+  private buildExplorerPaymentOptions(rawRows: VehicleRaw[], paymentMappings: ExplorerPaymentMappingRow[]) {
+    const values = new Set<string>();
+    for (const row of rawRows) {
+      const suggested = this.suggestPaymentValue(row.payment_method ?? "", []);
+      if (suggested) {
+        values.add(suggested);
+      }
+    }
+    for (const record of paymentMappings) {
+      const canonical = record.canonical_value.trim();
+      if (canonical) {
+        values.add(canonical);
+      }
+    }
+
+    return [...values]
+      .sort((left, right) => left.localeCompare(right))
+      .map((value) => ({ value, label: value }));
+  }
+
+  private suggestBranchId(branches: Branch[], rawValue: string) {
+    const normalized = rawValue.trim().toLowerCase();
+    if (!normalized) {
+      return undefined;
+    }
+
+    const branch = branches.find(
+      (candidate) => candidate.code.toLowerCase() === normalized || candidate.name.toLowerCase() === normalized,
+    );
+    return branch?.id;
+  }
+
+  private suggestPaymentValue(rawValue: string, paymentOptions: Array<{ value: string; label: string }>) {
+    const normalized = rawValue.trim().toLowerCase();
+    if (!normalized) {
+      return undefined;
+    }
+
+    const exact = paymentOptions.find((option) => option.value.toLowerCase() === normalized);
+    if (exact) {
+      return exact.value;
+    }
+
+    return normalized
+      .split(/[\s_-]+/)
+      .filter(Boolean)
+      .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+      .join(" ");
+  }
+
+  private async backfillBranchMapping(companyId: string, rawValue: string, branchId: string) {
+    const branch = (await this.fetchCompanyBranches(companyId)).find((candidate) => candidate.id === branchId);
+    if (!branch) {
+      throw new BadRequestException(`Branch ${branchId} not found`);
+    }
+
+    const rawRows = await this.fetchWorkbookRows(companyId);
+    const matchingRows = rawRows.filter((row) => (row.branch_code ?? "").trim().toLowerCase() === rawValue.trim().toLowerCase());
+    const matchingRowIds = matchingRows.map((row) => row.id);
+    if (matchingRowIds.length === 0) {
+      return;
+    }
+    const matchingChassisNos = [...new Set(
+      matchingRows
+        .map((row) => row.chassis_no?.trim())
+        .filter((chassisNo): chassisNo is string => Boolean(chassisNo)),
+    )];
+
+    const client = this.supabase.getAdminClient();
+    const { error: rawError } = await client
+      .schema("raw")
+      .from("vehicle_import_rows")
+      .update({ branch_id: branch.id })
+      .eq("company_id", companyId)
+      .in("id", matchingRowIds);
+    if (rawError) {
+      throw new InternalServerErrorException(rawError.message);
+    }
+
+    if (matchingChassisNos.length > 0) {
+      const { error: vehicleError } = await client
+        .schema("app")
+        .from("vehicle_records")
+        .update({ branch_id: branch.id })
+        .eq("company_id", companyId)
+        .in("chassis_no", matchingChassisNos);
+      if (vehicleError) {
+        throw new InternalServerErrorException(vehicleError.message);
+      }
+
+      const { error: issueError } = await client
+        .schema("app")
+        .from("quality_issues")
+        .update({ branch_id: branch.id })
+        .eq("company_id", companyId)
+        .in("chassis_no", matchingChassisNos);
+      if (issueError) {
+        throw new InternalServerErrorException(issueError.message);
+      }
+    }
+  }
+
+  private async backfillPaymentMapping(companyId: string, rawValue: string, canonicalValue: string) {
+    const rawRows = await this.fetchWorkbookRows(companyId);
+    const matchingRows = rawRows.filter((row) => (row.payment_method ?? "").trim().toLowerCase() === rawValue.trim().toLowerCase());
+    const matchingRowIds = matchingRows.map((row) => row.id);
+    if (matchingRowIds.length === 0) {
+      return;
+    }
+    const matchingChassisNos = [...new Set(
+      matchingRows
+        .map((row) => row.chassis_no?.trim())
+        .filter((chassisNo): chassisNo is string => Boolean(chassisNo)),
+    )];
+
+    const client = this.supabase.getAdminClient();
+    const { error: rawError } = await client
+      .schema("raw")
+      .from("vehicle_import_rows")
+      .update({ payment_method: canonicalValue })
+      .eq("company_id", companyId)
+      .in("id", matchingRowIds);
+    if (rawError) {
+      throw new InternalServerErrorException(rawError.message);
+    }
+
+    if (matchingChassisNos.length > 0) {
+      const { error: vehicleError } = await client
+        .schema("app")
+        .from("vehicle_records")
+        .update({ payment_method: canonicalValue })
+        .eq("company_id", companyId)
+        .in("chassis_no", matchingChassisNos);
+      if (vehicleError) {
+        throw new InternalServerErrorException(vehicleError.message);
+      }
+    }
   }
 
   private mapVehicleRow(row: VehicleRow): VehicleCanonical {
@@ -3105,7 +3498,48 @@ export class SupabasePlatformRepository implements PlatformRepository {
       reg_no: payload.reg_no,
       invoice_no: payload.invoice_no,
       obr: payload.obr,
+      source_headers: payload.source_headers ?? undefined,
+      source_values: payload.source_values ?? undefined,
     };
+  }
+
+  private mapWorkbookRow(row: VehicleRaw): WorkbookExplorerRow {
+    const workbookRow: WorkbookExplorerRow = {
+      id: row.id,
+      row_number: row.row_number,
+      chassis_no: row.chassis_no,
+      bg_date: row.bg_date,
+      shipment_etd_pkg: row.shipment_etd_pkg,
+      shipment_eta_kk_twu_sdk: row.shipment_eta_kk_twu_sdk,
+      date_received_by_outlet: row.date_received_by_outlet,
+      reg_date: row.reg_date,
+      delivery_date: row.delivery_date,
+      disb_date: row.disb_date,
+      branch_code: row.branch_code ?? "UNKNOWN",
+      model: row.model ?? "Unknown",
+      payment_method: row.payment_method ?? "Unknown",
+      salesman_name: row.salesman_name ?? "Unknown",
+      customer_name: row.customer_name ?? "Unknown",
+      remark: row.remark,
+      vaa_date: row.vaa_date,
+      full_payment_date: row.full_payment_date,
+      is_d2d: row.is_d2d ?? false,
+      import_batch_id: row.import_batch_id,
+      source_row_id: row.id,
+      variant: row.variant,
+      dealer_transfer_price: row.dealer_transfer_price,
+      full_payment_type: row.full_payment_type,
+      shipment_name: row.shipment_name,
+      lou: row.lou,
+      contra_sola: row.contra_sola,
+      reg_no: row.reg_no,
+      invoice_no: row.invoice_no,
+      obr: row.obr,
+      source_headers: row.source_headers,
+      source_values: row.source_values,
+    };
+
+    return workbookRow as WorkbookExplorerRow;
   }
 
   private async persistRawImportRows(
@@ -3468,30 +3902,20 @@ function defaultExplorerSavedViewQuery(): ExplorerQuery {
 }
 
 function normalizeExportQuery(query: ExplorerQuery): ExplorerQuery {
+  const normalized = normalizeExplorerQuery(query);
   return {
-    search: query.search?.trim() || undefined,
-    branch: query.branch ?? "all",
-    model: query.model ?? "all",
-    payment: query.payment ?? "all",
-    preset: query.preset,
+    ...normalized,
     page: 1,
     pageSize: 100,
-    sortField: query.sortField ?? "bg_to_delivery",
-    sortDirection: query.sortDirection ?? "desc",
   };
 }
 
 function normalizeExplorerSavedViewQuery(query: ExplorerQuery): ExplorerQuery {
+  const normalized = normalizeExplorerQuery(query);
   return {
-    search: query.search?.trim() || undefined,
-    branch: query.branch ?? "all",
-    model: query.model ?? "all",
-    payment: query.payment ?? "all",
-    preset: query.preset,
+    ...normalized,
     page: 1,
     pageSize: query.pageSize ? Math.min(Math.max(query.pageSize, 1), 100) : 50,
-    sortField: query.sortField ?? "bg_to_delivery",
-    sortDirection: query.sortDirection ?? "desc",
   };
 }
 
@@ -3504,24 +3928,16 @@ function buildExportSubscriptionFingerprint(query: ExplorerQuery) {
   return `daily:${JSON.stringify(normalizeExportQuery(query))}`;
 }
 
-function describeExportQuery(query: ExplorerQuery) {
-  const parts = [
-    query.search ? `search=${query.search}` : null,
-    query.branch && query.branch !== "all" ? `branch=${query.branch}` : null,
-    query.model && query.model !== "all" ? `model=${query.model}` : null,
-    query.payment && query.payment !== "all" ? `payment=${query.payment}` : null,
-    query.preset ? `preset=${query.preset}` : null,
-  ].filter(Boolean);
-
-  return parts.length > 0 ? parts.join(", ") : "all vehicles";
-}
-
 function canViewCompanyWideExports(user: User) {
   return ["super_admin", "company_admin", "director"].includes(user.role);
 }
 
 function canManageVehicleCorrections(user: User) {
-  return ["super_admin", "company_admin", "director"].includes(user.role);
+  return VEHICLE_CORRECTION_EDITOR_ROLES.includes(user.role);
+}
+
+function canManageExplorerMappings(user: User) {
+  return ["super_admin", "company_admin"].includes(user.role);
 }
 
 function normalizeCorrectionComparableValue(field: VehicleCorrectionField, value: unknown) {
@@ -3539,7 +3955,7 @@ function normalizeVehicleCorrectionValue(field: VehicleCorrectionField, value: s
   if (field === "remark") {
     return normalized.length > 0 ? normalized : null;
   }
-  if (field === "payment_method" || field === "salesman_name" || field === "customer_name") {
+  if (field === "branch_code" || field === "payment_method" || field === "salesman_name" || field === "customer_name") {
     if (!normalized) {
       throw new BadRequestException(`${VEHICLE_CORRECTION_FIELD_LABELS[field]} cannot be blank`);
     }

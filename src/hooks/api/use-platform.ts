@@ -6,14 +6,17 @@ import type {
   CreateExportSubscriptionRequest,
   ExecutiveDashboardMetricId,
   ExportJob,
+  ExplorerMappingsResponse,
   ExplorerPreset,
   ExplorerQueryRequest,
   ImportBatch,
   ImportDetailResponse,
   NotificationsResponse,
   UpdateAlertRequest,
+  UpdateExplorerMappingsRequest,
   UpdateVehicleCorrectionsRequest,
 } from "@flcbi/contracts";
+import { normalizeExplorerQuery } from "@flcbi/contracts";
 import { apiClient } from "@/lib/api-client";
 
 function isImportPending(status?: ImportBatch["status"]) {
@@ -70,19 +73,7 @@ export function useAgingSummary(
 
 export function useExplorer(query: ExplorerQueryRequest, enabled = true) {
   return useQuery({
-    queryKey: [
-      "aging",
-      "explorer",
-      query.search ?? "",
-      query.branch ?? "all",
-      query.model ?? "all",
-      query.payment ?? "all",
-      query.preset ?? "all",
-      query.page,
-      query.pageSize,
-      query.sortField ?? "bg_to_delivery",
-      query.sortDirection ?? "desc",
-    ],
+    queryKey: ["aging", "explorer", JSON.stringify(normalizeExplorerQuery(query))],
     queryFn: () => apiClient.queryExplorer(query),
     enabled,
     placeholderData: (previousData) => previousData,
@@ -113,6 +104,27 @@ export function useDeleteExplorerSavedView() {
     mutationFn: (id: string) => apiClient.deleteExplorerSavedView(id),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["aging", "saved-views"] });
+    },
+  });
+}
+
+export function useExplorerMappings(enabled = true) {
+  return useQuery<ExplorerMappingsResponse>({
+    queryKey: ["aging", "mappings"],
+    queryFn: () => apiClient.getExplorerMappings(),
+    enabled,
+  });
+}
+
+export function useSaveExplorerMappings() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: UpdateExplorerMappingsRequest) => apiClient.saveExplorerMappings(input),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["aging", "mappings"] });
+      void queryClient.invalidateQueries({ queryKey: ["aging", "explorer"] });
+      void queryClient.invalidateQueries({ queryKey: ["aging", "summary"] });
+      void queryClient.invalidateQueries({ queryKey: ["aging", "vehicle"] });
     },
   });
 }

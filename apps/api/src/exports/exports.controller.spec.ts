@@ -4,7 +4,7 @@ import "reflect-metadata";
 import { ValidationPipe } from "@nestjs/common";
 import type { ExplorerQuery, ExportSubscription, User } from "@flcbi/contracts";
 import { describe, expect, it, vi } from "vitest";
-import { ExplorerQueryDto } from "../aging/aging.dto.js";
+import { ExplorerDateRangeDto, ExplorerFilterSetDto, ExplorerQueryDto } from "../aging/aging.dto.js";
 import type { PlatformRepository } from "../platform/platform.repository.js";
 import { ExportsController } from "./exports.controller.js";
 import { CreateExportSubscriptionDto } from "./exports.dto.js";
@@ -24,6 +24,11 @@ describe("POST /exports/subscriptions", () => {
       branch: "all",
       model: "all",
       payment: "all",
+      filters: {
+        customerName: "Beta",
+        isD2D: true,
+        deliveryDate: { from: "2026-03-01", to: "2026-03-31" },
+      },
       page: 1,
       pageSize: 50,
       sortField: "bg_date",
@@ -60,6 +65,8 @@ describe("POST /exports/subscriptions", () => {
     expect(body).toBeInstanceOf(CreateExportSubscriptionDto);
     expect(body.schedule).toBe("daily");
     expect(body.query).toBeInstanceOf(ExplorerQueryDto);
+    expect(body.query.filters).toBeInstanceOf(ExplorerFilterSetDto);
+    expect(body.query.filters?.deliveryDate).toBeInstanceOf(ExplorerDateRangeDto);
     expect(body.query).toMatchObject(query);
 
     const response = await controller.createExportSubscription(adminUser, body);

@@ -11,7 +11,7 @@ interface AuthContextType {
   isLoading: boolean;
   login: (email: string, password: string) => Promise<boolean>;
   logout: () => void;
-  hasRole: (roles: AppRole[]) => boolean;
+  hasRole: (roles: readonly AppRole[]) => boolean;
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
@@ -236,7 +236,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, [queryClient]);
 
-  const hasRole = useCallback((roles: AppRole[]): boolean => {
+  const hasRole = useCallback((roles: readonly AppRole[]): boolean => {
     const user = session?.user;
     if (!user) return false;
     if (user.role === "super_admin") return true;

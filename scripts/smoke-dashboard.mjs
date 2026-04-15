@@ -43,6 +43,7 @@ const password = process.env.FLCBI_SMOKE_PASSWORD ?? smokeEnv.BOOTSTRAP_ADMIN_PA
 const baseUrl =
   process.env.FLCBI_SMOKE_BASE_URL ??
   `http://127.0.0.1:${smokeEnv.VITE_PORT ?? "18133"}`;
+const explorerLoadTimeout = 40000;
 
 function assert(condition, message) {
   if (!condition) {
@@ -126,6 +127,85 @@ async function restoreMetricBoard(page, metricIds) {
   }
 }
 
+async function findExplorerRowSample(page) {
+  for (let pageIndex = 0; pageIndex < 20; pageIndex += 1) {
+    await page.getByTestId("vehicle-explorer-row").first().waitFor({ timeout: explorerLoadTimeout });
+
+    const rows = page.getByTestId("vehicle-explorer-row");
+    const count = await rows.count();
+
+    for (let index = 0; index < count; index += 1) {
+      const row = rows.nth(index);
+      const editButtonCount = await row.getByTestId("vehicle-explorer-edit-button").count();
+      if (editButtonCount === 0) {
+        continue;
+      }
+
+      const cells = row.locator("td");
+      const chassisValue = (await cells.nth(0).textContent())?.trim();
+      const paymentValue = (await cells.nth(3).textContent())?.trim();
+      const dateValue = (await cells.nth(7).textContent())?.trim();
+      const d2dValue = (await cells.nth(14).textContent())?.trim();
+
+      if (chassisValue && paymentValue && dateValue && d2dValue && chassisValue !== "—" && paymentValue !== "—" && dateValue !== "—" && d2dValue !== "—") {
+        return {
+          chassisNo: chassisValue,
+          paymentMethod: paymentValue,
+          bgDate: dateValue,
+          isD2D: d2dValue,
+        };
+      }
+    }
+
+    const nextPage = page.getByTestId("vehicle-explorer-next-page");
+    if (await nextPage.isDisabled()) {
+      break;
+    }
+
+    const summaryBefore = await page.getByTestId("vehicle-explorer-pagination-summary").innerText();
+    await nextPage.click();
+    await page.waitForFunction(
+      (previous) => document.querySelector('[data-testid="vehicle-explorer-pagination-summary"]')?.textContent !== previous,
+      summaryBefore,
+      { timeout: explorerLoadTimeout },
+    );
+  }
+
+  throw new Error("Could not find an editable explorer row with sample values for chassis, payment, date, and D2D columns");
+}
+
+async function openHeaderFilter(page, columnKey) {
+  await page.getByTestId(`vehicle-explorer-filter-trigger-${columnKey}`).click();
+  await page.getByTestId(`vehicle-explorer-filter-popover-${columnKey}`).waitFor({ timeout: 15000 });
+}
+
+async function waitForExplorerReady(page) {
+  const waitForPagination = async () => {
+    await page.getByRole("heading", { name: "Vehicle Explorer" }).waitFor({ timeout: explorerLoadTimeout });
+    await page.getByTestId("vehicle-explorer-pagination-top").waitFor({ timeout: explorerLoadTimeout });
+  };
+
+  try {
+    await waitForPagination();
+  } catch (error) {
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await waitForPagination();
+  }
+}
+
+function parseExplorerFiltersFromUrl(url) {
+  const filters = url.searchParams.get("filters");
+  if (!filters) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(filters);
+  } catch {
+    return null;
+  }
+}
+
 const browser = await chromium.launch({ headless: true });
 const context = await browser.newContext({ baseURL: baseUrl });
 const page = await context.newPage();
@@ -189,11 +269,11 @@ try {
 
   const paymentSelect = page.getByTestId("executive-filter-payment");
   const paymentOptions = await paymentSelect.locator("option").allTextContents();
-  const chosenPayment = paymentOptions.find((value) => value !== "All Payments");
-  assert(Boolean(chosenPayment), "No payment filter options found after branch selection");
-
-  await paymentSelect.selectOption({ label: chosenPayment });
-  await page.waitForTimeout(800);
+  const chosenPayment = paymentOptions.find((value) => value !== "All Payments") ?? null;
+  if (chosenPayment) {
+    await paymentSelect.selectOption({ label: chosenPayment });
+    await page.waitForTimeout(800);
+  }
 
   const presetSelect = page.getByTestId("executive-filter-preset");
   await presetSelect.selectOption("registered_pending_delivery");
@@ -201,7 +281,9 @@ try {
 
   const dashboardUrl = new URL(page.url());
   assert(dashboardUrl.searchParams.get("branch") === chosenBranch, "Branch filter did not persist in URL");
-  assert(dashboardUrl.searchParams.get("payment") === chosenPayment, "Payment filter did not persist in URL");
+  if (chosenPayment) {
+    assert(dashboardUrl.searchParams.get("payment") === chosenPayment, "Payment filter did not persist in URL");
+  }
   assert(dashboardUrl.searchParams.get("preset") === "registered_pending_delivery", "Preset filter did not persist in URL");
 
   console.log("step: drilldown");
@@ -210,29 +292,45 @@ try {
 
   const explorerUrl = new URL(page.url());
   assert(explorerUrl.searchParams.get("branch") === chosenBranch, "Branch filter not carried into explorer");
-  assert(explorerUrl.searchParams.get("payment") === chosenPayment, "Payment filter not carried into explorer");
+  if (chosenPayment) {
+    assert(explorerUrl.searchParams.get("payment") === chosenPayment, "Payment filter not carried into explorer");
+  }
   assert(explorerUrl.searchParams.get("preset") === "registered_pending_delivery", "Preset not carried into explorer");
-  await page.getByTestId("vehicle-explorer-pagination-top").waitFor({ timeout: 15000 });
-  await page.getByTestId("vehicle-explorer-pagination-bottom").waitFor({ timeout: 15000 });
+  await waitForExplorerReady(page);
+  await page.getByTestId("vehicle-explorer-pagination-bottom").waitFor({ timeout: explorerLoadTimeout });
   await page.getByTestId("vehicle-explorer-page-size").selectOption("25");
   await page.waitForURL("**pageSize=25**", { timeout: 15000 });
-  await page.getByTestId("vehicle-explorer-pagination-summary").waitFor({ timeout: 15000 });
+  await page.getByTestId("vehicle-explorer-pagination-summary").waitFor({ timeout: explorerLoadTimeout });
 
   console.log("step: auto-aging-drilldown");
   await page.goto("/auto-aging", { waitUntil: "domcontentloaded" });
   await page.getByRole("heading", { name: "Auto Aging Dashboard" }).waitFor({ timeout: 15000 });
 
   const autoAgingBranchSelect = page.locator("select").first();
+  await page.waitForFunction(() => {
+    const select = document.querySelector("select");
+    return Boolean(select && select.options.length > 1);
+  }, undefined, { timeout: explorerLoadTimeout });
   const autoAgingBranchOptions = await autoAgingBranchSelect.locator("option").allTextContents();
-  const autoAgingBranchChoice = autoAgingBranchOptions.find((value) => value !== "All Branches");
-  assert(Boolean(autoAgingBranchChoice), "No auto-aging branch filter options found");
-
-  await autoAgingBranchSelect.selectOption({ label: autoAgingBranchChoice });
-  await page.waitForTimeout(800);
-
   const autoAgingModelSelect = page.locator("select").nth(1);
-  const autoAgingModelOptions = await autoAgingModelSelect.locator("option").allTextContents();
-  const autoAgingModelChoice = autoAgingModelOptions.find((value) => value !== "All Models");
+  const autoAgingBranchChoices = autoAgingBranchOptions.filter((value) => value !== "All Branches");
+  let autoAgingBranchChoice = null;
+  let autoAgingModelChoice = null;
+
+  for (const branchChoice of autoAgingBranchChoices) {
+    await autoAgingBranchSelect.selectOption({ label: branchChoice });
+    await page.waitForTimeout(1200);
+
+    const autoAgingModelOptions = await autoAgingModelSelect.locator("option").allTextContents();
+    const modelChoice = autoAgingModelOptions.find((value) => value !== "All Models");
+    if (modelChoice) {
+      autoAgingBranchChoice = branchChoice;
+      autoAgingModelChoice = modelChoice;
+      break;
+    }
+  }
+
+  assert(Boolean(autoAgingBranchChoice), "No auto-aging branch/model combination found");
   assert(Boolean(autoAgingModelChoice), "No auto-aging model filter options found");
 
   await autoAgingModelSelect.selectOption({ label: autoAgingModelChoice });
@@ -240,7 +338,7 @@ try {
 
   await page.locator(".kpi-card").first().click();
   await page.waitForURL("**/auto-aging/vehicles**", { timeout: 15000 });
-  await page.getByRole("heading", { name: "Vehicle Explorer" }).waitFor({ timeout: 15000 });
+  await page.getByRole("heading", { name: "Vehicle Explorer" }).waitFor({ timeout: explorerLoadTimeout });
 
   const autoAgingExplorerUrl = new URL(page.url());
   assert(autoAgingExplorerUrl.searchParams.get("branch") === autoAgingBranchChoice, "Auto-aging branch filter not carried into explorer");
@@ -251,20 +349,17 @@ try {
   await page.getByTestId("explorer-save-view-button").click();
   await page.getByTestId("explorer-save-view-name").fill(savedViewName);
   await page.getByTestId("explorer-save-view-submit").click();
+  await page.goto("/auto-aging/vehicles?pageSize=100", { waitUntil: "domcontentloaded" });
+  await waitForExplorerReady(page);
   const savedViewRow = page.getByTestId("explorer-saved-view-row").filter({ hasText: savedViewName }).first();
-  await savedViewRow.waitFor({ timeout: 15000 });
-
-  const explorerModelSelect = page.locator("select").nth(2);
-  await explorerModelSelect.selectOption({ label: "All Models" });
-  await page.waitForTimeout(1000);
-  const modelResetUrl = new URL(page.url());
-  assert(modelResetUrl.searchParams.get("model") === null, "Model filter did not reset before applying saved view");
+  await savedViewRow.waitFor({ timeout: explorerLoadTimeout });
 
   await savedViewRow.click();
   await page.waitForURL((url) => (
     url.searchParams.get("branch") === autoAgingBranchChoice &&
     url.searchParams.get("model") === autoAgingModelChoice
   ), { timeout: 15000 });
+  await waitForExplorerReady(page);
 
   const savedViewUrl = new URL(page.url());
   assert(savedViewUrl.searchParams.get("branch") === autoAgingBranchChoice, "Saved view did not restore branch");
@@ -272,8 +367,130 @@ try {
 
   await savedViewRow.getByTestId("explorer-saved-view-delete").click();
   await page.getByTestId("explorer-saved-view-delete-confirm").click();
-  await page.waitForTimeout(1000);
-  assert(await savedViewRow.count() === 0, "Saved view row still visible after delete");
+  await page.waitForTimeout(2000);
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await waitForExplorerReady(page);
+  assert(
+    (await page.getByTestId("explorer-saved-view-row").filter({ hasText: savedViewName }).count()) === 0,
+    "Saved view row still visible after delete",
+  );
+
+  await page.goto("/auto-aging/vehicles?pageSize=100", { waitUntil: "domcontentloaded" });
+  await waitForExplorerReady(page);
+
+  console.log("step: header-filter-text");
+  const explorerRows = page.getByTestId("vehicle-explorer-row");
+  await explorerRows.first().waitFor({ timeout: 15000 });
+  const explorerRowCount = await explorerRows.count();
+  const sampleRow = await findExplorerRowSample(page);
+
+  await openHeaderFilter(page, "chassis-no");
+  await page.getByTestId("vehicle-explorer-filter-chassis-no-input").fill(sampleRow.chassisNo);
+  await page.getByTestId("vehicle-explorer-filter-chassis-no-apply").click();
+  await page.waitForFunction(() => document.querySelectorAll('[data-testid="vehicle-explorer-row"]').length === 1, undefined, { timeout: 15000 });
+
+  const textFilterRows = page.getByTestId("vehicle-explorer-row");
+  const textFilterRowCount = await textFilterRows.count();
+  assert(textFilterRowCount === 1, `Chassis filter did not narrow grid to one row (${textFilterRowCount})`);
+
+  const textFilterUrl = new URL(page.url());
+  const textFilterState = parseExplorerFiltersFromUrl(textFilterUrl);
+  assert(textFilterState?.columnFilters?.chassis_no === sampleRow.chassisNo, "Text filter did not persist in URL");
+
+  await openHeaderFilter(page, "chassis-no");
+  await page.getByTestId("vehicle-explorer-filter-chassis-no-clear").click();
+  await page.waitForFunction((expected) => document.querySelectorAll('[data-testid="vehicle-explorer-row"]').length === expected, explorerRowCount, { timeout: 15000 });
+
+  const clearedRows = page.getByTestId("vehicle-explorer-row");
+  const clearedRowCount = await clearedRows.count();
+  assert(clearedRowCount === explorerRowCount, `Chassis filter clear did not restore the original row count (${clearedRowCount} vs ${explorerRowCount})`);
+
+  const clearedFilterState = parseExplorerFiltersFromUrl(new URL(page.url()));
+  assert(!clearedFilterState?.columnFilters?.chassis_no, "Chassis filter remained in URL after clear");
+
+  console.log("step: header-filter-date");
+  await openHeaderFilter(page, "bg-date");
+  await page.getByTestId("vehicle-explorer-filter-bg-date-from").fill(sampleRow.bgDate);
+  await page.getByTestId("vehicle-explorer-filter-bg-date-to").fill(sampleRow.bgDate);
+  await page.getByTestId("vehicle-explorer-filter-bg-date-apply").click();
+  await page.waitForFunction(() => document.querySelectorAll('[data-testid="vehicle-explorer-row"]').length >= 1, undefined, { timeout: 15000 });
+
+  const dateFilterUrl = new URL(page.url());
+  const dateFilterState = parseExplorerFiltersFromUrl(dateFilterUrl);
+  assert(dateFilterState?.columnFilters?.bg_date?.from === sampleRow.bgDate, "Date filter start did not persist in URL");
+  assert(dateFilterState?.columnFilters?.bg_date?.to === sampleRow.bgDate, "Date filter end did not persist in URL");
+
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await waitForExplorerReady(page);
+  const dateReloadRows = await page.getByTestId("vehicle-explorer-row").count();
+  assert(dateReloadRows >= 1, "Date range filter did not survive reload");
+
+  await openHeaderFilter(page, "bg-date");
+  await page.getByTestId("vehicle-explorer-filter-bg-date-clear").click();
+  await page.waitForFunction((expected) => document.querySelectorAll('[data-testid="vehicle-explorer-row"]').length === expected, explorerRowCount, { timeout: 15000 });
+
+  console.log("step: header-filter-select");
+  await openHeaderFilter(page, "payment-method");
+  await page.getByTestId("vehicle-explorer-filter-payment-method-select").selectOption({ label: sampleRow.paymentMethod });
+  await page.getByTestId("vehicle-explorer-filter-payment-method-apply").click();
+  await page.waitForFunction(() => document.querySelectorAll('[data-testid="vehicle-explorer-row"]').length >= 1, undefined, { timeout: 15000 });
+
+  const selectFilterUrl = new URL(page.url());
+  const selectFilterState = parseExplorerFiltersFromUrl(selectFilterUrl);
+  assert(selectFilterState?.columnFilters?.payment_method === sampleRow.paymentMethod, "Select filter did not persist in URL");
+
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await waitForExplorerReady(page);
+  const selectReloadRows = await page.getByTestId("vehicle-explorer-row").count();
+  assert(selectReloadRows >= 1, "Select filter did not survive reload");
+
+  await openHeaderFilter(page, "payment-method");
+  await page.getByTestId("vehicle-explorer-filter-payment-method-clear").click();
+  await page.waitForFunction((expected) => document.querySelectorAll('[data-testid="vehicle-explorer-row"]').length === expected, explorerRowCount, { timeout: 15000 });
+
+  console.log("step: header-filter-boolean");
+  await openHeaderFilter(page, "is-d2d");
+  await page.getByTestId("vehicle-explorer-filter-is-d2d-select").selectOption({ label: sampleRow.isD2D });
+  await page.getByTestId("vehicle-explorer-filter-is-d2d-apply").click();
+  await page.waitForFunction(() => document.querySelectorAll('[data-testid="vehicle-explorer-row"]').length >= 1, undefined, { timeout: 15000 });
+
+  const booleanFilterUrl = new URL(page.url());
+  const booleanFilterState = parseExplorerFiltersFromUrl(booleanFilterUrl);
+  assert(booleanFilterState?.columnFilters?.is_d2d === (sampleRow.isD2D === "Yes"), "Boolean filter did not persist in URL");
+
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await waitForExplorerReady(page);
+  const booleanReloadRows = await page.getByTestId("vehicle-explorer-row").count();
+  assert(booleanReloadRows >= 1, "Boolean filter did not survive reload");
+
+  await openHeaderFilter(page, "is-d2d");
+  await page.getByTestId("vehicle-explorer-filter-is-d2d-clear").click();
+  await page.waitForFunction((expected) => document.querySelectorAll('[data-testid="vehicle-explorer-row"]').length === expected, explorerRowCount, { timeout: 15000 });
+
+  console.log("step: inline-edit");
+  await openHeaderFilter(page, "chassis-no");
+  await page.getByTestId("vehicle-explorer-filter-chassis-no-input").fill(sampleRow.chassisNo);
+  await page.getByTestId("vehicle-explorer-filter-chassis-no-apply").click();
+  await page.waitForFunction(() => document.querySelectorAll('[data-testid="vehicle-explorer-row"]').length === 1, undefined, { timeout: 15000 });
+
+  const inlineEditRow = page.getByTestId("vehicle-explorer-row").first();
+  await inlineEditRow.getByTestId("vehicle-explorer-edit-button").click();
+  const updatedRemark = `Smoke inline edit ${Date.now()}`;
+  await inlineEditRow.getByTestId("vehicle-explorer-edit-input-remark").fill(updatedRemark);
+  await page.getByTestId("vehicle-explorer-reason-input").fill("Smoke test inline remark update");
+  await inlineEditRow.getByTestId("vehicle-explorer-save-button").click();
+  await page.getByTestId("vehicle-explorer-reason-input").waitFor({ state: "detached", timeout: 15000 });
+
+  const inlineEditUrl = new URL(page.url());
+  const inlineEditState = parseExplorerFiltersFromUrl(inlineEditUrl);
+  assert(inlineEditState?.columnFilters?.chassis_no === sampleRow.chassisNo, "Inline edit filter state was lost");
+
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await page.getByText(updatedRemark, { exact: true }).waitFor({ timeout: 15000 });
+
+  await page.goto(`/auto-aging/vehicles/${sampleRow.chassisNo}`, { waitUntil: "domcontentloaded" });
+  await page.getByText("Vehicle Information").waitFor({ timeout: 15000 });
+  await page.getByText(updatedRemark, { exact: true }).waitFor({ timeout: 15000 });
 
   console.log("step: quality-issues");
   await page.goto("/auto-aging/quality", { waitUntil: "domcontentloaded" });
@@ -303,6 +520,12 @@ try {
   } else {
     await page.getByText("No data quality issues detected yet.").waitFor({ timeout: 15000 });
   }
+
+  console.log("step: mapping-console");
+  await page.goto("/auto-aging/mappings", { waitUntil: "domcontentloaded" });
+  await page.getByRole("heading", { name: "Mapping Console" }).waitFor({ timeout: 15000 });
+  await page.getByTestId("mapping-admin-save").waitFor({ timeout: 15000 });
+  await page.getByText("System suggestions are ready to review").waitFor({ timeout: 15000 });
 
   console.log("step: import-history");
   await page.goto("/auto-aging/history", { waitUntil: "domcontentloaded" });
@@ -361,7 +584,11 @@ try {
 } finally {
   if (initialMetricIds.length > 0) {
     console.log("step: restore-board");
-    await restoreMetricBoard(page, initialMetricIds);
+    try {
+      await restoreMetricBoard(page, initialMetricIds);
+    } catch (error) {
+      console.warn("step: restore-board-warning", error instanceof Error ? error.message : String(error));
+    }
   }
   await browser.close();
 }

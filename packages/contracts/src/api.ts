@@ -20,6 +20,8 @@ import type {
   UserStatus,
   User,
   VehicleCanonical,
+  WorkbookExplorerColumn,
+  WorkbookExplorerRow,
   DataQualityIssue,
 } from "./domain.js";
 import type { VehicleCorrection } from "./vehicle-corrections.js";
@@ -76,6 +78,44 @@ export interface ExplorerQueryResponse {
   result: ExplorerResult;
 }
 
+export interface ExplorerMappingsBranchOption {
+  rawValue: string;
+  branchId: string;
+  branchCode: string;
+  branchName: string;
+  approved: boolean;
+  sourceCount: number;
+  suggestedBranchId?: string;
+}
+
+export interface ExplorerMappingsPaymentOption {
+  rawValue: string;
+  canonicalValue: string;
+  approved: boolean;
+  sourceCount: number;
+  suggestedCanonicalValue?: string;
+}
+
+export interface ExplorerMappingsResponse {
+  branches: ExplorerMappingsBranchOption[];
+  payments: ExplorerMappingsPaymentOption[];
+  branchOptions: Array<{ value: string; label: string }>;
+  paymentOptions: Array<{ value: string; label: string }>;
+}
+
+export interface UpdateExplorerMappingsRequest {
+  branches?: Array<{
+    rawValue: string;
+    branchId: string;
+    approved?: boolean;
+  }>;
+  payments?: Array<{
+    rawValue: string;
+    canonicalValue: string;
+    approved?: boolean;
+  }>;
+}
+
 export interface VehicleDetailResponse {
   vehicle: VehicleCanonical;
   issues: DataQualityIssue[];
@@ -90,6 +130,7 @@ export interface UpdateVehicleCorrectionsRequest {
   reg_date?: string;
   delivery_date?: string;
   disb_date?: string;
+  branch_code?: string;
   payment_method?: string;
   salesman_name?: string;
   customer_name?: string;

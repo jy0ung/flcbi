@@ -13,14 +13,14 @@ export const ROLE_PERMISSIONS: Record<AppRole, PermissionGrant[]> = {
     { resource: "audit", actions: ["read"], companyId: SELF_COMPANY },
   ],
   director: [
-    { resource: "aging", actions: ["read", "export"], companyId: SELF_COMPANY },
+    { resource: "aging", actions: ["read", "write", "export"], companyId: SELF_COMPANY },
     { resource: "audit", actions: ["read"], companyId: SELF_COMPANY },
   ],
   general_manager: [
-    { resource: "aging", actions: ["read", "export"], companyId: SELF_COMPANY },
+    { resource: "aging", actions: ["read", "write", "export"], companyId: SELF_COMPANY },
   ],
   manager: [
-    { resource: "aging", actions: ["read", "export"], companyId: SELF_COMPANY, branchIds: [SELF_BRANCH] },
+    { resource: "aging", actions: ["read", "write", "export"], companyId: SELF_COMPANY, branchIds: [SELF_BRANCH] },
   ],
   sales: [
     { resource: "aging", actions: ["read"], companyId: SELF_COMPANY, branchIds: [SELF_BRANCH] },

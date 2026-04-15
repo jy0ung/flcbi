@@ -1,15 +1,8 @@
-import * as XLSX from "xlsx";
+import ExcelJS from "exceljs";
 import type { DataQualityIssue, VehicleCanonical, VehicleRaw } from "./domain.js";
 
-const xlsxDefault = Reflect.get(XLSX as object, "default") as typeof XLSX | undefined;
-const xlsxRuntime = (xlsxDefault ?? XLSX) as typeof XLSX & {
-  SSF?: {
-    parse_date_code?: (
-      value: number,
-      options?: { date1904?: boolean },
-    ) => { y?: number; m?: number; d?: number } | null;
-  };
-};
+const MAX_IMPORT_FILE_BYTES = 25 * 1024 * 1024;
+const MAX_IMPORT_ROWS = 50_000;
 
 function normalizeHeader(raw: unknown): string {
   return String(raw ?? "")
@@ -88,6 +81,25 @@ function formatDateParts(year: number, month: number, day: number): string {
   return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 }
 
+function excelSerialToDateParts(serial: number, date1904: boolean): string | undefined {
+  if (!Number.isFinite(serial)) {
+    return undefined;
+  }
+
+  const wholeDays = Math.trunc(serial);
+  const fraction = serial - wholeDays;
+  const adjustedDays = date1904 ? wholeDays : wholeDays >= 60 ? wholeDays - 1 : wholeDays;
+  const epoch = date1904 ? Date.UTC(1904, 0, 1) : Date.UTC(1899, 11, 31);
+  const timestamp = epoch + adjustedDays * 86400000 + Math.round(fraction * 86400000);
+  const date = new Date(timestamp);
+
+  if (Number.isNaN(date.getTime())) {
+    return undefined;
+  }
+
+  return formatDateParts(date.getUTCFullYear(), date.getUTCMonth() + 1, date.getUTCDate());
+}
+
 function isValidDateParts(year: number, month: number, day: number) {
   const candidate = new Date(Date.UTC(year, month - 1, day));
   return (
@@ -139,18 +151,18 @@ function parseExcelDate(value: unknown, date1904: boolean): string | undefined {
   }
 
   if (typeof value === "number") {
-    const parsed = xlsxRuntime.SSF?.parse_date_code?.(value, { date1904 });
-    if (parsed?.y && parsed.m && parsed.d) {
-      return formatDateParts(parsed.y, parsed.m, parsed.d);
+    const parsed = excelSerialToDateParts(value, date1904);
+    if (parsed) {
+      return parsed;
     }
   }
 
   if (typeof value === "string") {
     const numericCandidate = Number(value);
     if (Number.isFinite(numericCandidate) && value.trim() !== "") {
-      const parsed = xlsxRuntime.SSF?.parse_date_code?.(numericCandidate, { date1904 });
-      if (parsed?.y && parsed.m && parsed.d) {
-        return formatDateParts(parsed.y, parsed.m, parsed.d);
+      const parsed = excelSerialToDateParts(numericCandidate, date1904);
+      if (parsed) {
+        return parsed;
       }
     }
 
@@ -158,6 +170,74 @@ function parseExcelDate(value: unknown, date1904: boolean): string | undefined {
   }
 
   return undefined;
+}
+
+function normalizeWorkbookCellValue(
+  value: unknown,
+  options: { date1904: boolean; header?: keyof VehicleRaw },
+): string | number | boolean | null | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return formatDateParts(value.getFullYear(), value.getMonth() + 1, value.getDate());
+  }
+
+  if (typeof value === "object") {
+    const record = value as Record<string, unknown>;
+
+    if ("formula" in record) {
+      return normalizeWorkbookCellValue(record.result ?? record.formula, options);
+    }
+
+    if ("richText" in record && Array.isArray(record.richText)) {
+      return record.richText
+        .map((part) => String((part as { text?: unknown }).text ?? ""))
+        .join("");
+    }
+
+    if ("text" in record && typeof record.text === "string") {
+      return record.text;
+    }
+
+    if ("hyperlink" in record && typeof record.text === "string") {
+      return record.text;
+    }
+
+    if ("result" in record) {
+      return normalizeWorkbookCellValue(record.result, options);
+    }
+  }
+
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (trimmed === "") {
+      return undefined;
+    }
+
+    if (options.header && DATE_FIELDS.has(options.header)) {
+      const parsed = parseExcelDate(trimmed, options.date1904);
+      if (parsed) {
+        return parsed;
+      }
+    }
+
+    return trimmed;
+  }
+
+  if (typeof value === "number") {
+    if (options.header && DATE_FIELDS.has(options.header)) {
+      return parseExcelDate(value, options.date1904);
+    }
+    return value;
+  }
+
+  if (typeof value === "boolean") {
+    return value;
+  }
+
+  return String(value).trim() || undefined;
 }
 
 export interface ParsedWorkbookResult {
@@ -185,60 +265,101 @@ export function summarizeParsedWorkbook(parsed: ParsedWorkbookResult): ParsedWor
   };
 }
 
-export function parseWorkbook(file: ArrayBuffer): ParsedWorkbookResult {
-  const workbook = xlsxRuntime.read(file, { type: "array", cellDates: true });
-  const sheetName = workbook.SheetNames.find((sheet) => sheet.toLowerCase().includes("combine")) ?? workbook.SheetNames[0];
-  const worksheet = workbook.Sheets[sheetName];
-  const jsonData = xlsxRuntime.utils.sheet_to_json<Record<string, unknown>>(worksheet, {
-    defval: "",
-    raw: true,
-  });
-  const date1904 = Boolean((workbook as { Workbook?: { WBProps?: { date1904?: boolean } } }).Workbook?.WBProps?.date1904);
+export async function parseWorkbook(file: ArrayBuffer): Promise<ParsedWorkbookResult> {
+  if (file.byteLength > MAX_IMPORT_FILE_BYTES) {
+    throw new Error(`Workbook exceeds the ${Math.floor(MAX_IMPORT_FILE_BYTES / 1024 / 1024)} MB import size limit`);
+  }
 
-  if (jsonData.length === 0) {
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(Buffer.from(file));
+
+  const sheetName = workbook.worksheets.find((sheet) => sheet.name.toLowerCase().includes("combine"))?.name
+    ?? workbook.worksheets[0]?.name;
+  if (!sheetName) {
+    return { rows: [], issues: [], missingColumns: ["No worksheets found"] };
+  }
+
+  const worksheet = workbook.getWorksheet(sheetName);
+  if (!worksheet) {
+    return { rows: [], issues: [], missingColumns: ["No worksheets found"] };
+  }
+
+  const date1904 = Boolean(workbook.properties?.date1904);
+  const headerRow = worksheet.getRow(1);
+  const columnCount = Math.max(worksheet.actualColumnCount ?? 0, headerRow.actualCellCount ?? 0);
+
+  if (columnCount === 0 || worksheet.actualRowCount <= 1) {
     return { rows: [], issues: [], missingColumns: ["No data found"] };
   }
 
-  const rawHeaders = Object.keys(jsonData[0]);
-  const columnMapping: Record<string, keyof VehicleRaw> = {};
+  const columnDefinitions = Array.from({ length: columnCount }, (_unused, index) => {
+    const rawHeader = String(headerRow.getCell(index + 1).value ?? "")
+      .trim()
+      .replace(/[\r\n\t]+/g, " ")
+      .replace(/\s{2,}/g, " ") || `Column ${index + 1}`;
 
-  rawHeaders.forEach((rawHeader) => {
-    const normalized = normalizeHeader(rawHeader);
-    if (HEADER_ALIAS_MAP[normalized]) {
-      columnMapping[rawHeader] = HEADER_ALIAS_MAP[normalized];
-    }
+    return {
+      rawHeader,
+      dbColumn: HEADER_ALIAS_MAP[normalizeHeader(rawHeader)],
+    } as const;
   });
 
-  const mappedDbColumns = new Set(Object.values(columnMapping));
+  const mappedDbColumns = new Set(columnDefinitions.flatMap((definition) => (definition.dbColumn ? [definition.dbColumn] : [])));
   const missingColumns = REQUIRED_DB_COLUMNS.filter((required) => !mappedDbColumns.has(required));
 
   const rows: VehicleRaw[] = [];
   const issues: DataQualityIssue[] = [];
   const batchId = `import-${Date.now()}`;
 
-  jsonData.forEach((row, index) => {
-    const vehicle: Partial<VehicleRaw> = {
-      id: `raw-${index}`,
-      import_batch_id: batchId,
-      row_number: index + 1,
-    };
+  const dataRowCount = Math.max(worksheet.actualRowCount - 1, 0);
+  if (dataRowCount > MAX_IMPORT_ROWS) {
+    throw new Error(`Workbook exceeds the ${MAX_IMPORT_ROWS.toLocaleString("en-US")} row import limit`);
+  }
 
-    Object.entries(columnMapping).forEach(([excelColumn, dbColumn]) => {
-      const value = row[excelColumn];
-      if (DATE_FIELDS.has(dbColumn)) {
-        (vehicle as Record<string, unknown>)[dbColumn] = parseExcelDate(value, date1904);
+  for (let rowIndex = 2; rowIndex <= worksheet.actualRowCount; rowIndex += 1) {
+    const row = worksheet.getRow(rowIndex);
+    if (!row.hasValues) {
+      continue;
+    }
+
+    const vehicle: Partial<VehicleRaw> = {
+      id: `raw-${rowIndex - 1}`,
+      import_batch_id: batchId,
+      row_number: rowIndex - 1,
+      source_headers: columnDefinitions.map((definition) => definition.rawHeader),
+    };
+    const sourceValues: Record<string, string | number | boolean | null> = {};
+
+    columnDefinitions.forEach((definition, columnIndex) => {
+      const cellValue = row.getCell(columnIndex + 1).value;
+
+      if (definition.dbColumn) {
+        const normalized = normalizeWorkbookCellValue(cellValue, { date1904, header: definition.dbColumn });
+        if (DATE_FIELDS.has(definition.dbColumn)) {
+          (vehicle as Record<string, unknown>)[definition.dbColumn] = normalized === undefined ? undefined : String(normalized).trim();
+        } else {
+          const textValue = normalized === undefined ? undefined : String(normalized).trim();
+          (vehicle as Record<string, unknown>)[definition.dbColumn] = textValue === "" ? undefined : textValue;
+        }
       } else {
-        (vehicle as Record<string, unknown>)[dbColumn] = value ? String(value).trim() : undefined;
+        const normalized = normalizeWorkbookCellValue(cellValue, { date1904 });
+        if (normalized !== undefined) {
+          sourceValues[definition.rawHeader] = normalized;
+        }
       }
     });
 
+    if (Object.keys(sourceValues).length > 0) {
+      vehicle.source_values = sourceValues;
+    }
+
     if (!vehicle.chassis_no) {
       issues.push({
-        id: `iss-${index}-chassis`,
+        id: `iss-${rowIndex - 1}-chassis`,
         chassisNo: "",
         field: "chassis_no",
         issueType: "missing",
-        message: `Row ${index + 1}: Missing chassis number`,
+        message: `Row ${rowIndex - 1}: Missing chassis number`,
         severity: "error",
         importBatchId: batchId,
       });
@@ -250,7 +371,7 @@ export function parseWorkbook(file: ArrayBuffer): ParsedWorkbookResult {
       false;
 
     rows.push(vehicle as VehicleRaw);
-  });
+  }
 
   const chassisCount = new Map<string, number>();
   rows.forEach((row) => {
@@ -286,10 +407,14 @@ export function publishCanonical(rows: VehicleRaw[]): { canonical: VehicleCanoni
 
   const canonical: VehicleCanonical[] = [];
   const issues: DataQualityIssue[] = [];
+  const ignoredCountFields = new Set<keyof VehicleRaw>(["source_headers", "source_values"]);
 
   grouped.forEach((group, chassis) => {
     const best = [...group].sort((left, right) => {
-      const countFields = (row: VehicleRaw) => Object.values(row).filter((value) => value !== undefined && value !== "").length;
+      const countFields = (row: VehicleRaw) =>
+        Object.entries(row).filter(
+          ([key, value]) => !ignoredCountFields.has(key as keyof VehicleRaw) && value !== undefined && value !== "",
+        ).length;
       return countFields(right) - countFields(left);
     })[0];
 

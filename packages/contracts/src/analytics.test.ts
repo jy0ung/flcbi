@@ -6,6 +6,7 @@ import {
   DEFAULT_EXECUTIVE_DASHBOARD_METRIC_IDS,
   normalizeExecutiveDashboardMetricIds,
   queryVehicles,
+  serializeCsvRows,
 } from "./analytics.js";
 import type { DataQualityIssue, ImportBatch, VehicleCanonical } from "./domain.js";
 
@@ -107,6 +108,29 @@ describe("queryVehicles", () => {
     expect(result.filterOptions.branches).toEqual(["KK", "MYY"]);
   });
 
+  it("filters by mixed explorer filters", () => {
+    const result = queryVehicles(vehicles, {
+      search: "alpha",
+      branch: "all",
+      model: "all",
+      payment: "all",
+      filters: {
+        salesmanName: "Ali",
+        customerName: "Alpha",
+        isD2D: false,
+        bgDate: { from: "2026-01-01", to: "2026-01-31" },
+        bgToDelivery: { min: 30, max: 35 },
+      },
+      page: 1,
+      pageSize: 25,
+      sortField: "bg_to_delivery",
+      sortDirection: "desc",
+    });
+
+    expect(result.total).toBe(1);
+    expect(result.items[0]?.chassis_no).toBe("PMK123456A");
+  });
+
   it("filters by explorer preset for open stock", () => {
     const result = queryVehicles(
       [
@@ -142,6 +166,26 @@ describe("normalizeExecutiveDashboardMetricIds", () => {
         "tracked_units",
       ]),
     ).toEqual(["tracked_units", "quality_issues"]);
+  });
+});
+
+describe("serializeCsvRows", () => {
+  it("neutralizes CSV formula injection prefixes", () => {
+    const csv = serializeCsvRows([
+      {
+        chassis_no: "=SUM(1,2)",
+        branch_code: "+NORTH",
+        model: "-MODEL",
+        payment_method: "@cmd",
+        salesman_name: " =SUM(9,9)",
+      },
+    ]);
+
+    expect(csv).toContain("'=SUM(1,2)");
+    expect(csv).toContain("'+NORTH");
+    expect(csv).toContain("'-MODEL");
+    expect(csv).toContain("'@cmd");
+    expect(csv).toContain("' =SUM(9,9)");
   });
 });
 

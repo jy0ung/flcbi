@@ -20,6 +20,7 @@ import type {
   ExportsResponse,
   CreateExplorerSavedViewRequest,
   CreateExplorerSavedViewResponse,
+  ExplorerMappingsResponse,
   ExportSubscriptionsResponse,
   ImportDetailResponse,
   ImportsResponse,
@@ -34,10 +35,11 @@ import type {
     RetryExportResponse,
     SlaPoliciesResponse,
     SuccessResponse,
-    UpdateAlertRequest,
-    UpdateAdminUserRequest,
-    UpdateVehicleCorrectionsRequest,
-    VehicleDetailResponse,
+  UpdateAlertRequest,
+  UpdateExplorerMappingsRequest,
+  UpdateAdminUserRequest,
+  UpdateVehicleCorrectionsRequest,
+  VehicleDetailResponse,
   } from "@flcbi/contracts";
 import { getSupabaseAccessToken } from "./supabase";
 
@@ -193,6 +195,15 @@ export const apiClient = {
   deleteExplorerSavedView(id: string) {
     return request<SuccessResponse>(`/saved-views/explorer/${encodeURIComponent(id)}`, {
       method: "DELETE",
+    });
+  },
+  getExplorerMappings() {
+    return request<ExplorerMappingsResponse>("/aging/mappings");
+  },
+  saveExplorerMappings(input: UpdateExplorerMappingsRequest) {
+    return request<ExplorerMappingsResponse>("/aging/mappings", {
+      method: "PATCH",
+      body: JSON.stringify(input),
     });
   },
   getVehicle(chassisNo: string) {

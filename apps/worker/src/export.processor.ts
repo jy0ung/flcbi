@@ -5,6 +5,7 @@ import {
   EXPORT_GENERATE_JOB_NAME,
   EXPORT_QUEUE_NAME,
   buildVehicleExplorerExportRows,
+  normalizeExplorerQuery,
   filterVehiclesForExplorer,
   serializeCsvRows,
   sortVehiclesForExplorer,
@@ -457,16 +458,11 @@ function defaultExportQuery(): ExplorerQuery {
 }
 
 function normalizeExportQuery(query: ExplorerQuery): ExplorerQuery {
+  const normalized = normalizeExplorerQuery(query);
   return {
-    search: query.search?.trim() || undefined,
-    branch: query.branch ?? "all",
-    model: query.model ?? "all",
-    payment: query.payment ?? "all",
-    preset: query.preset,
+    ...normalized,
     page: 1,
     pageSize: 100,
-    sortField: query.sortField ?? "bg_to_delivery",
-    sortDirection: query.sortDirection ?? "desc",
   };
 }
 

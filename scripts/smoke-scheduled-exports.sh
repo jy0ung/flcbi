@@ -325,7 +325,36 @@ with open(sys.argv[1], "r", encoding="utf-8") as handle:
     rows = list(csv.reader(handle))
 
 assert len(rows) == 3, rows
-assert rows[0][0] == "Chassis No", rows[0]
+expected_headers = [
+    "Chassis No.",
+    "Branch",
+    "Model",
+    "Payment Method",
+    "Salesman",
+    "Customer",
+    "Remark",
+    "BG Date",
+    "Shipment ETD",
+    "Shipment ETA",
+    "Outlet Received",
+    "Registration Date",
+    "Delivery Date",
+    "Disbursement Date",
+    "D2D",
+    "No.",
+    "VAA Date",
+    "Full Payment Date",
+    "Variant",
+    "Dealer Transfer Price",
+    "Full Payment Type",
+    "Shipment Name",
+    "LOU",
+    "Contra Sola",
+    "Reg No.",
+    "Invoice No.",
+    "OBR",
+]
+assert rows[0] == expected_headers, rows[0]
 
 print("Smoke scheduled export succeeded")
 print(f"Scheduled export rows: {len(rows) - 1}")

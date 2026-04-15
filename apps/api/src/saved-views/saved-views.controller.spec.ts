@@ -4,7 +4,7 @@ import "reflect-metadata";
 import { ValidationPipe } from "@nestjs/common";
 import type { ExplorerQuery, ExplorerSavedView, User } from "@flcbi/contracts";
 import { describe, expect, it, vi } from "vitest";
-import { ExplorerQueryDto } from "../aging/aging.dto.js";
+import { ExplorerDateRangeDto, ExplorerFilterSetDto, ExplorerQueryDto } from "../aging/aging.dto.js";
 import type { PlatformRepository } from "../platform/platform.repository.js";
 import { CreateExplorerSavedViewDto } from "./saved-views.dto.js";
 import { SavedViewsController } from "./saved-views.controller.js";
@@ -24,6 +24,11 @@ describe("POST /saved-views/explorer", () => {
       branch: "KK",
       model: "ATIVA",
       payment: "CASH",
+      filters: {
+        salesmanName: "Alicia",
+        bgDate: { from: "2026-01-01", to: "2026-01-31" },
+        bgToDelivery: { min: 30, max: 45 },
+      },
       page: 1,
       pageSize: 50,
       sortField: "bg_date",
@@ -55,6 +60,8 @@ describe("POST /saved-views/explorer", () => {
     expect(body).toBeInstanceOf(CreateExplorerSavedViewDto);
     expect(body.name).toBe("KK Ativa");
     expect(body.query).toBeInstanceOf(ExplorerQueryDto);
+    expect(body.query.filters).toBeInstanceOf(ExplorerFilterSetDto);
+    expect(body.query.filters?.bgDate).toBeInstanceOf(ExplorerDateRangeDto);
     expect(body.query).toMatchObject(query);
 
     const response = await controller.createExplorerSavedView(adminUser, body);

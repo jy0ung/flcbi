@@ -3,9 +3,13 @@ import type {
   BranchComparison,
   DashboardPreferences,
   DataQualityIssue,
+  ExplorerDateRangeFilter,
+  ExplorerColumnFilterSet,
+  ExplorerFilterSet,
   ExecutiveDashboardMetricId,
   ExplorerPreset,
   ExplorerQuery,
+  ExplorerNumberRangeFilter,
   ExplorerResult,
   FilterOptions,
   ImportBatch,
@@ -18,6 +22,9 @@ import type {
   StockSnapshot,
   TrendPoint,
   VehicleCanonical,
+  WorkbookExplorerColumn,
+  WorkbookExplorerColumnKind,
+  WorkbookExplorerRow,
 } from "./domain.js";
 import { KPI_DEFINITIONS } from "./kpis.js";
 
@@ -237,7 +244,13 @@ export const navigationItems: NavigationItem[] = [
   },
   { label: "Data Quality", path: "/auto-aging/quality", icon: "AlertTriangle", section: "Auto Aging" },
   { label: "SLA Policies", path: "/auto-aging/sla", icon: "Gauge", section: "Auto Aging" },
-  { label: "Mappings", path: "/auto-aging/mappings", icon: "Map", section: "Auto Aging" },
+  {
+    label: "Mappings",
+    path: "/auto-aging/mappings",
+    icon: "Map",
+    section: "Auto Aging",
+    roles: ["super_admin", "company_admin"],
+  },
   { label: "Import History", path: "/auto-aging/history", icon: "History", section: "Auto Aging" },
   { label: "Users & Roles", path: "/admin/users", icon: "Shield", section: "Admin", roles: ["super_admin", "company_admin"] },
   { label: "Audit Log", path: "/admin/audit", icon: "FileText", section: "Admin", roles: ["super_admin", "company_admin", "director"] },
@@ -508,95 +521,689 @@ export function buildAgingSummary(
   };
 }
 
+const RAW_WORKBOOK_HIDDEN_COLUMNS = new Set([
+  "id",
+  "import_batch_id",
+  "row_number",
+  "source_headers",
+  "source_values",
+  "bg_to_delivery",
+  "bg_to_shipment_etd",
+  "etd_to_outlet_received",
+  "outlet_received_to_reg",
+  "reg_to_delivery",
+  "etd_to_eta",
+  "eta_to_outlet_received",
+  "outlet_received_to_delivery",
+  "bg_to_disb",
+  "delivery_to_disb",
+]);
+
+const RAW_WORKBOOK_FIXED_COLUMNS: Array<{
+  key: keyof WorkbookExplorerRow | string;
+  label: string;
+  kind: WorkbookExplorerColumnKind;
+  width: string;
+  editable?: boolean;
+  sticky?: "left" | "right";
+  filterable?: boolean;
+}> = [
+  { key: "chassis_no", label: "Chassis No.", kind: "text", width: "min-w-[160px]", sticky: "left", filterable: true, editable: false },
+  { key: "branch_code", label: "Branch", kind: "select", width: "min-w-[120px]", sticky: "left", filterable: true, editable: true },
+  { key: "model", label: "Model", kind: "select", width: "min-w-[140px]", sticky: "left", filterable: true, editable: false },
+  { key: "payment_method", label: "Payment Method", kind: "select", width: "min-w-[140px]", filterable: true, editable: true },
+  { key: "salesman_name", label: "Salesman", kind: "text", width: "min-w-[160px]", filterable: true, editable: true },
+  { key: "customer_name", label: "Customer", kind: "text", width: "min-w-[220px]", filterable: true, editable: true },
+  { key: "remark", label: "Remark", kind: "text", width: "min-w-[240px]", filterable: true, editable: true },
+  { key: "bg_date", label: "BG Date", kind: "date", width: "min-w-[118px]", filterable: true, editable: true },
+  { key: "shipment_etd_pkg", label: "Shipment ETD", kind: "date", width: "min-w-[118px]", filterable: true, editable: true },
+  { key: "shipment_eta_kk_twu_sdk", label: "Shipment ETA", kind: "date", width: "min-w-[118px]", filterable: true, editable: false },
+  { key: "date_received_by_outlet", label: "Outlet Received", kind: "date", width: "min-w-[118px]", filterable: true, editable: true },
+  { key: "reg_date", label: "Registration Date", kind: "date", width: "min-w-[118px]", filterable: true, editable: true },
+  { key: "delivery_date", label: "Delivery Date", kind: "date", width: "min-w-[118px]", filterable: true, editable: true },
+  { key: "disb_date", label: "Disbursement Date", kind: "date", width: "min-w-[118px]", filterable: true, editable: true },
+  { key: "is_d2d", label: "D2D", kind: "boolean", width: "min-w-[84px]", filterable: true, editable: false },
+  { key: "source_row_no", label: "No.", kind: "text", width: "min-w-[90px]", filterable: true, editable: false },
+  { key: "vaa_date", label: "VAA Date", kind: "date", width: "min-w-[118px]", filterable: true, editable: false },
+  { key: "full_payment_date", label: "Full Payment Date", kind: "date", width: "min-w-[118px]", filterable: true, editable: false },
+  { key: "variant", label: "Variant", kind: "text", width: "min-w-[140px]", filterable: true, editable: false },
+  { key: "dealer_transfer_price", label: "Dealer Transfer Price", kind: "text", width: "min-w-[150px]", filterable: true, editable: false },
+  { key: "full_payment_type", label: "Full Payment Type", kind: "text", width: "min-w-[150px]", filterable: true, editable: false },
+  { key: "shipment_name", label: "Shipment Name", kind: "text", width: "min-w-[180px]", filterable: true, editable: false },
+  { key: "lou", label: "LOU", kind: "text", width: "min-w-[120px]", filterable: true, editable: false },
+  { key: "contra_sola", label: "Contra Sola", kind: "text", width: "min-w-[120px]", filterable: true, editable: false },
+  { key: "reg_no", label: "Reg No.", kind: "text", width: "min-w-[120px]", filterable: true, editable: false },
+  { key: "invoice_no", label: "Invoice No.", kind: "text", width: "min-w-[120px]", filterable: true, editable: false },
+  { key: "obr", label: "OBR", kind: "text", width: "min-w-[120px]", filterable: true, editable: false },
+];
+
+function humanizeWorkbookColumnKey(key: string) {
+  return key
+    .replace(/[_-]+/g, " ")
+    .replace(/\b\w/g, (match) => match.toUpperCase())
+    .trim();
+}
+
+function getWorkbookCellValue(row: WorkbookExplorerRow, key: string) {
+  if (key in row) {
+    return (row as unknown as Record<string, string | number | boolean | null | undefined>)[key];
+  }
+
+  return row.source_values?.[key];
+}
+
+function isWorkbookDateValue(value: unknown) {
+  return typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value);
+}
+
+function inferWorkbookColumnKind(values: Array<string | number | boolean | null | undefined>): WorkbookExplorerColumnKind {
+  const seen = values.filter((value) => value !== undefined && value !== null);
+  if (seen.length === 0) {
+    return "text";
+  }
+
+  if (seen.every((value) => typeof value === "boolean")) {
+    return "boolean";
+  }
+
+  if (seen.every((value) => typeof value === "number")) {
+    return "number";
+  }
+
+  if (seen.every((value) => isWorkbookDateValue(value))) {
+    return "date";
+  }
+
+  return "text";
+}
+
+export function buildWorkbookExplorerColumns(
+  rows: WorkbookExplorerRow[],
+  filterOptions: FilterOptions,
+): WorkbookExplorerColumn[] {
+  const columns: WorkbookExplorerColumn[] = RAW_WORKBOOK_FIXED_COLUMNS.map((column) => ({
+    key: column.key,
+    label: column.label,
+    kind: column.kind,
+    width: column.width,
+    editable: column.editable,
+    sticky: column.sticky,
+    filterable: column.filterable,
+    options:
+      column.key === "branch_code"
+        ? filterOptions.branches
+        : column.key === "model"
+          ? filterOptions.models
+          : column.key === "payment_method"
+            ? filterOptions.payments
+            : undefined,
+  }));
+
+  const extraKeys = new Set<string>();
+  const extraKeyOrder: string[] = [];
+  const extraValues = new Map<string, Array<string | number | boolean | null | undefined>>();
+
+  const addExtraKey = (key: string) => {
+    if (RAW_WORKBOOK_HIDDEN_COLUMNS.has(key) || RAW_WORKBOOK_FIXED_COLUMNS.some((column) => column.key === key)) {
+      return;
+    }
+    if (!extraKeys.has(key)) {
+      extraKeys.add(key);
+      extraKeyOrder.push(key);
+    }
+  };
+
+  for (const row of rows) {
+    const sourceValues = row.source_values ?? {};
+    const headers = row.source_headers ?? [];
+    for (const header of headers) {
+      addExtraKey(header);
+    }
+    for (const [key, value] of Object.entries(sourceValues)) {
+      addExtraKey(key);
+      const values = extraValues.get(key) ?? [];
+      values.push(value);
+      extraValues.set(key, values);
+    }
+  }
+
+  for (const key of extraKeyOrder) {
+    const sampleValues = extraValues.get(key) ?? [];
+    columns.push({
+      key,
+      label: humanizeWorkbookColumnKey(key),
+      kind: inferWorkbookColumnKind(sampleValues),
+      width: "min-w-[180px]",
+      editable: false,
+      filterable: true,
+    });
+  }
+
+  return columns;
+}
+
+function toWorkbookColumnKeySet(columns: WorkbookExplorerColumn[]) {
+  return new Map(columns.map((column) => [column.key, column]));
+}
+
+function normalizeColumnFilterValue(
+  value: string | boolean | ExplorerDateRangeFilter | ExplorerNumberRangeFilter | undefined,
+): string | boolean | ExplorerDateRangeFilter | ExplorerNumberRangeFilter | undefined {
+  if (typeof value === "string") {
+    return normalizeTextValue(value);
+  }
+
+  if (typeof value === "boolean") {
+    return value;
+  }
+
+  if (!value) {
+    return undefined;
+  }
+
+  if ("from" in value || "to" in value) {
+    return normalizeDateRange(value as ExplorerDateRangeFilter);
+  }
+
+  return normalizeNumberRange(value as ExplorerNumberRangeFilter);
+}
+
+function normalizeTextValue(value?: string | null) {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : undefined;
+}
+
+function normalizeDateRange(range?: ExplorerDateRangeFilter) {
+  const from = normalizeTextValue(range?.from);
+  const to = normalizeTextValue(range?.to);
+  if (!from && !to) {
+    return undefined;
+  }
+
+  return { from, to };
+}
+
+function normalizeNumberRange(range?: ExplorerNumberRangeFilter) {
+  const hasMin = typeof range?.min === "number" && Number.isFinite(range.min);
+  const hasMax = typeof range?.max === "number" && Number.isFinite(range.max);
+  if (!hasMin && !hasMax) {
+    return undefined;
+  }
+
+  return {
+    min: hasMin ? range!.min : undefined,
+    max: hasMax ? range!.max : undefined,
+  };
+}
+
+export function normalizeExplorerFilters(filters?: ExplorerFilterSet): ExplorerFilterSet | undefined {
+  if (!filters) {
+    return undefined;
+  }
+
+  const normalized: ExplorerFilterSet = {};
+
+  const chassisNo = normalizeTextValue(filters.chassisNo);
+  if (chassisNo) normalized.chassisNo = chassisNo;
+
+  const salesmanName = normalizeTextValue(filters.salesmanName);
+  if (salesmanName) normalized.salesmanName = salesmanName;
+
+  const customerName = normalizeTextValue(filters.customerName);
+  if (customerName) normalized.customerName = customerName;
+
+  const remark = normalizeTextValue(filters.remark);
+  if (remark) normalized.remark = remark;
+
+  if (typeof filters.isD2D === "boolean") {
+    normalized.isD2D = filters.isD2D;
+  }
+
+  const bgDate = normalizeDateRange(filters.bgDate);
+  if (bgDate) normalized.bgDate = bgDate;
+
+  const shipmentEtdPkg = normalizeDateRange(filters.shipmentEtdPkg);
+  if (shipmentEtdPkg) normalized.shipmentEtdPkg = shipmentEtdPkg;
+
+  const dateReceivedByOutlet = normalizeDateRange(filters.dateReceivedByOutlet);
+  if (dateReceivedByOutlet) normalized.dateReceivedByOutlet = dateReceivedByOutlet;
+
+  const regDate = normalizeDateRange(filters.regDate);
+  if (regDate) normalized.regDate = regDate;
+
+  const deliveryDate = normalizeDateRange(filters.deliveryDate);
+  if (deliveryDate) normalized.deliveryDate = deliveryDate;
+
+  const disbDate = normalizeDateRange(filters.disbDate);
+  if (disbDate) normalized.disbDate = disbDate;
+
+  const bgToDelivery = normalizeNumberRange(filters.bgToDelivery);
+  if (bgToDelivery) normalized.bgToDelivery = bgToDelivery;
+
+  const bgToShipmentEtd = normalizeNumberRange(filters.bgToShipmentEtd);
+  if (bgToShipmentEtd) normalized.bgToShipmentEtd = bgToShipmentEtd;
+
+  const etdToOutletReceived = normalizeNumberRange(filters.etdToOutletReceived);
+  if (etdToOutletReceived) normalized.etdToOutletReceived = etdToOutletReceived;
+
+  const outletReceivedToReg = normalizeNumberRange(filters.outletReceivedToReg);
+  if (outletReceivedToReg) normalized.outletReceivedToReg = outletReceivedToReg;
+
+  const regToDelivery = normalizeNumberRange(filters.regToDelivery);
+  if (regToDelivery) normalized.regToDelivery = regToDelivery;
+
+  const bgToDisb = normalizeNumberRange(filters.bgToDisb);
+  if (bgToDisb) normalized.bgToDisb = bgToDisb;
+
+  const deliveryToDisb = normalizeNumberRange(filters.deliveryToDisb);
+  if (deliveryToDisb) normalized.deliveryToDisb = deliveryToDisb;
+
+  if (filters.columnFilters) {
+    const normalizedColumnFilters: ExplorerFilterSet["columnFilters"] = {};
+    for (const [key, value] of Object.entries(filters.columnFilters)) {
+      const normalizedValue = normalizeColumnFilterValue(value);
+      if (normalizedValue !== undefined) {
+        normalizedColumnFilters[key] = normalizedValue;
+      }
+    }
+
+    if (Object.keys(normalizedColumnFilters).length > 0) {
+      normalized.columnFilters = normalizedColumnFilters;
+    }
+  }
+
+  return Object.keys(normalized).length > 0 ? normalized : undefined;
+}
+
+export function normalizeExplorerQuery(query: ExplorerQuery): ExplorerQuery {
+  return {
+    search: normalizeTextValue(query.search),
+    branch: normalizeTextValue(query.branch) ?? "all",
+    model: normalizeTextValue(query.model) ?? "all",
+    payment: normalizeTextValue(query.payment) ?? "all",
+    preset: query.preset,
+    filters: normalizeExplorerFilters(query.filters),
+    page: Math.max(query.page ?? 1, 1),
+    pageSize: Math.min(Math.max(query.pageSize ?? 25, 1), 100),
+    sortField: normalizeTextValue(query.sortField) ?? "row_number",
+    sortDirection: query.sortDirection ?? "asc",
+  };
+}
+
+function formatRange(range?: ExplorerDateRangeFilter) {
+  if (!range) {
+    return "";
+  }
+
+  if (range.from && range.to) {
+    return `${range.from} → ${range.to}`;
+  }
+  if (range.from) {
+    return `from ${range.from}`;
+  }
+  if (range.to) {
+    return `to ${range.to}`;
+  }
+
+  return "";
+}
+
+function formatNumberRange(range?: ExplorerNumberRangeFilter) {
+  if (!range) {
+    return "";
+  }
+
+  const min = typeof range.min === "number" ? String(range.min) : "";
+  const max = typeof range.max === "number" ? String(range.max) : "";
+  if (min && max) {
+    return `${min} - ${max}`;
+  }
+  if (min) {
+    return `≥ ${min}`;
+  }
+  if (max) {
+    return `≤ ${max}`;
+  }
+
+  return "";
+}
+
+function summarizeTextFilter(label: string, value?: string) {
+  const normalized = normalizeTextValue(value);
+  return normalized ? `${label}: ${normalized}` : undefined;
+}
+
+export function listExplorerQueryTokens(query: ExplorerQuery) {
+  const normalized = normalizeExplorerQuery(query);
+  const filters = normalized.filters;
+  const chassisNo = filters?.chassisNo;
+  const salesmanName = filters?.salesmanName;
+  const customerName = filters?.customerName;
+  const remark = filters?.remark;
+  const isD2D = filters?.isD2D;
+  const bgDate = filters?.bgDate;
+  const shipmentEtdPkg = filters?.shipmentEtdPkg;
+  const dateReceivedByOutlet = filters?.dateReceivedByOutlet;
+  const regDate = filters?.regDate;
+  const deliveryDate = filters?.deliveryDate;
+  const disbDate = filters?.disbDate;
+  const bgToDelivery = filters?.bgToDelivery;
+  const bgToShipmentEtd = filters?.bgToShipmentEtd;
+  const etdToOutletReceived = filters?.etdToOutletReceived;
+  const outletReceivedToReg = filters?.outletReceivedToReg;
+  const regToDelivery = filters?.regToDelivery;
+  const bgToDisb = filters?.bgToDisb;
+  const deliveryToDisb = filters?.deliveryToDisb;
+  const columnFilters = filters?.columnFilters ?? {};
+
+  const columnFilterTokens = Object.entries(columnFilters).map(([key, value]) => {
+    const label = humanizeWorkbookColumnKey(key);
+    if (typeof value === "string") {
+      return value ? `${label}: ${value}` : undefined;
+    }
+    if (typeof value === "boolean") {
+      return `${label}: ${value ? "Yes" : "No"}`;
+    }
+    if (value && "from" in value && "to" in value) {
+      const text = formatRange(value as ExplorerDateRangeFilter);
+      return text ? `${label}: ${text}` : undefined;
+    }
+    if (value && "min" in value && "max" in value) {
+      const text = formatNumberRange(value as ExplorerNumberRangeFilter);
+      return text ? `${label}: ${text}` : undefined;
+    }
+    return undefined;
+  });
+
+  return [
+    normalized.search ? `Search: ${normalized.search}` : undefined,
+    normalized.branch !== "all" ? `Branch: ${normalized.branch}` : undefined,
+    normalized.model !== "all" ? `Model: ${normalized.model}` : undefined,
+    normalized.payment !== "all" ? `Payment: ${normalized.payment}` : undefined,
+    normalized.preset ? `Preset: ${normalized.preset.replaceAll("_", " ")}` : undefined,
+    chassisNo ? `Chassis: ${chassisNo}` : undefined,
+    summarizeTextFilter("Salesman", salesmanName),
+    summarizeTextFilter("Customer", customerName),
+    summarizeTextFilter("Remark", remark),
+    typeof isD2D === "boolean" ? `D2D: ${isD2D ? "Yes" : "No"}` : undefined,
+    formatRange(bgDate) ? `BG Date: ${formatRange(bgDate)}` : undefined,
+    formatRange(shipmentEtdPkg) ? `Shipment ETD: ${formatRange(shipmentEtdPkg)}` : undefined,
+    formatRange(dateReceivedByOutlet) ? `Outlet Received: ${formatRange(dateReceivedByOutlet)}` : undefined,
+    formatRange(regDate) ? `Registration Date: ${formatRange(regDate)}` : undefined,
+    formatRange(deliveryDate) ? `Delivery Date: ${formatRange(deliveryDate)}` : undefined,
+    formatRange(disbDate) ? `Disbursement Date: ${formatRange(disbDate)}` : undefined,
+    formatNumberRange(bgToDelivery) ? `BG → Delivery: ${formatNumberRange(bgToDelivery)}` : undefined,
+    formatNumberRange(bgToShipmentEtd) ? `BG → ETD: ${formatNumberRange(bgToShipmentEtd)}` : undefined,
+    formatNumberRange(etdToOutletReceived) ? `ETD → Outlet: ${formatNumberRange(etdToOutletReceived)}` : undefined,
+    formatNumberRange(outletReceivedToReg) ? `Outlet → Reg: ${formatNumberRange(outletReceivedToReg)}` : undefined,
+    formatNumberRange(regToDelivery) ? `Reg → Delivery: ${formatNumberRange(regToDelivery)}` : undefined,
+    formatNumberRange(bgToDisb) ? `BG → Disb: ${formatNumberRange(bgToDisb)}` : undefined,
+    formatNumberRange(deliveryToDisb) ? `Delivery → Disb: ${formatNumberRange(deliveryToDisb)}` : undefined,
+    ...columnFilterTokens,
+  ].filter((token): token is string => Boolean(token));
+}
+
+export function describeExplorerQuery(query: ExplorerQuery) {
+  const tokens = listExplorerQueryTokens(query);
+  return tokens.length > 0 ? tokens.join(" · ") : "All vehicles";
+}
+
 export function queryVehicles(
-  vehicles: VehicleCanonical[],
+  vehicles: WorkbookExplorerRow[],
   query: ExplorerQuery,
 ): ExplorerResult {
-  const filtered = sortVehiclesForExplorer(filterVehiclesForExplorer(vehicles, query), query);
+  const normalized = normalizeExplorerQuery(query);
+  const filterOptions = buildFilterOptions(vehicles);
+  const columns = buildWorkbookExplorerColumns(vehicles, filterOptions);
+  const filtered = filterVehiclesForExplorer(vehicles, normalized, columns);
+  const sorted = sortVehiclesForExplorer(filtered, normalized, columns);
 
-  const page = Math.max(query.page, 1);
-  const pageSize = Math.min(Math.max(query.pageSize, 1), 100);
+  const page = normalized.page;
+  const pageSize = normalized.pageSize;
   const start = (page - 1) * pageSize;
-  const items = filtered.slice(start, start + pageSize);
+  const items = sorted.slice(start, start + pageSize);
 
   return {
     items,
-    total: filtered.length,
+    columns,
+    total: sorted.length,
     page,
     pageSize,
-    filterOptions: buildFilterOptions(vehicles),
+    filterOptions,
   };
 }
 
 export function filterVehiclesForExplorer(
-  vehicles: VehicleCanonical[],
-  query: Pick<ExplorerQuery, "search" | "branch" | "model" | "payment" | "preset">,
+  vehicles: WorkbookExplorerRow[],
+  query: Pick<ExplorerQuery, "search" | "branch" | "model" | "payment" | "preset" | "filters">,
+  columns: WorkbookExplorerColumn[] = buildWorkbookExplorerColumns(vehicles, buildFilterOptions(vehicles)),
   referenceDate = new Date().toISOString().slice(0, 10),
 ) {
+  const normalized = normalizeExplorerQuery({
+    search: query.search,
+    branch: query.branch,
+    model: query.model,
+    payment: query.payment,
+    preset: query.preset,
+    filters: query.filters,
+    page: 1,
+    pageSize: 25,
+  });
+  const columnsByKey = toWorkbookColumnKeySet(columns);
+
   return vehicles.filter((vehicle) => {
-    if (query.search) {
-      const term = query.search.toLowerCase();
-      const matchesSearch =
-        vehicle.chassis_no.toLowerCase().includes(term) ||
-        vehicle.customer_name.toLowerCase().includes(term) ||
-        vehicle.salesman_name.toLowerCase().includes(term);
-      if (!matchesSearch) return false;
+    if (normalized.search && !matchesWorkbookSearchTerm(vehicle, normalized.search)) return false;
+    if (normalized.branch !== "all" && vehicle.branch_code !== normalized.branch) return false;
+    if (normalized.model !== "all" && vehicle.model !== normalized.model) return false;
+    if (normalized.payment !== "all" && vehicle.payment_method !== normalized.payment) return false;
+    if (!matchesExplorerPreset(vehicle, normalized.preset, referenceDate)) return false;
+
+    const filters = normalized.filters;
+    if (filters?.chassisNo && !vehicle.chassis_no.toLowerCase().includes(filters.chassisNo.toLowerCase())) return false;
+    if (filters?.salesmanName && !vehicle.salesman_name.toLowerCase().includes(filters.salesmanName.toLowerCase())) return false;
+    if (filters?.customerName && !vehicle.customer_name.toLowerCase().includes(filters.customerName.toLowerCase())) return false;
+    if (filters?.remark && !(vehicle.remark ?? "").toLowerCase().includes(filters.remark.toLowerCase())) return false;
+    if (typeof filters?.isD2D === "boolean" && vehicle.is_d2d !== filters.isD2D) return false;
+
+    if (filters?.bgDate && !matchesDateRange(vehicle.bg_date, filters.bgDate)) return false;
+    if (filters?.shipmentEtdPkg && !matchesDateRange(vehicle.shipment_etd_pkg, filters.shipmentEtdPkg)) return false;
+    if (filters?.dateReceivedByOutlet && !matchesDateRange(vehicle.date_received_by_outlet, filters.dateReceivedByOutlet)) return false;
+    if (filters?.regDate && !matchesDateRange(vehicle.reg_date, filters.regDate)) return false;
+    if (filters?.deliveryDate && !matchesDateRange(vehicle.delivery_date, filters.deliveryDate)) return false;
+    if (filters?.disbDate && !matchesDateRange(vehicle.disb_date, filters.disbDate)) return false;
+
+    if (filters?.bgToDelivery && !matchesNumberRange(vehicle.bg_to_delivery, filters.bgToDelivery)) return false;
+    if (filters?.bgToShipmentEtd && !matchesNumberRange(vehicle.bg_to_shipment_etd, filters.bgToShipmentEtd)) return false;
+    if (filters?.etdToOutletReceived && !matchesNumberRange(vehicle.etd_to_outlet_received, filters.etdToOutletReceived)) return false;
+    if (filters?.outletReceivedToReg && !matchesNumberRange(vehicle.outlet_received_to_reg, filters.outletReceivedToReg)) return false;
+    if (filters?.regToDelivery && !matchesNumberRange(vehicle.reg_to_delivery, filters.regToDelivery)) return false;
+    if (filters?.bgToDisb && !matchesNumberRange(vehicle.bg_to_disb, filters.bgToDisb)) return false;
+    if (filters?.deliveryToDisb && !matchesNumberRange(vehicle.delivery_to_disb, filters.deliveryToDisb)) return false;
+
+    for (const [key, value] of Object.entries(filters?.columnFilters ?? {})) {
+      const column = columnsByKey.get(key);
+      if (!column) {
+        continue;
+      }
+
+      if (!matchesWorkbookColumnFilter(vehicle, key, column.kind, value)) {
+        return false;
+      }
     }
-    if (query.branch && query.branch !== "all" && vehicle.branch_code !== query.branch) return false;
-    if (query.model && query.model !== "all" && vehicle.model !== query.model) return false;
-    if (query.payment && query.payment !== "all" && vehicle.payment_method !== query.payment) return false;
-    if (!matchesExplorerPreset(vehicle, query.preset, referenceDate)) return false;
+
     return true;
   });
 }
 
 export function sortVehiclesForExplorer(
-  vehicles: VehicleCanonical[],
+  vehicles: WorkbookExplorerRow[],
   query: Pick<ExplorerQuery, "sortField" | "sortDirection">,
+  columns: WorkbookExplorerColumn[] = buildWorkbookExplorerColumns(vehicles, buildFilterOptions(vehicles)),
 ) {
+  const columnsByKey = toWorkbookColumnKeySet(columns);
   return [...vehicles].sort((left, right) => {
-    const field = query.sortField ?? "bg_to_delivery";
-    const direction = query.sortDirection ?? "desc";
-    const leftValue = (left[field] as number | string | null | undefined) ?? 0;
-    const rightValue = (right[field] as number | string | null | undefined) ?? 0;
-    if (typeof leftValue === "string" && typeof rightValue === "string") {
-      return direction === "desc"
-        ? rightValue.localeCompare(leftValue)
-        : leftValue.localeCompare(rightValue);
-    }
-    return direction === "desc"
-      ? Number(rightValue) - Number(leftValue)
-      : Number(leftValue) - Number(rightValue);
+    const field = normalizeTextValue(query.sortField) ?? "row_number";
+    const direction = query.sortDirection ?? "asc";
+    const column = columnsByKey.get(field);
+    const leftRaw = getWorkbookCellValue(left, field) ?? (left as unknown as Record<string, string | number | boolean | null | undefined>)[field];
+    const rightRaw = getWorkbookCellValue(right, field) ?? (right as unknown as Record<string, string | number | boolean | null | undefined>)[field];
+
+    const compare = compareWorkbookCellValues(leftRaw, rightRaw, column?.kind);
+    return direction === "desc" ? compare * -1 : compare;
   });
 }
 
-export function buildVehicleExplorerExportRows(vehicles: VehicleCanonical[]) {
-  return vehicles.map((vehicle) => ({
-    "Chassis No": vehicle.chassis_no,
-    Branch: vehicle.branch_code,
-    Model: vehicle.model,
-    "Payment Method": vehicle.payment_method,
-    Salesman: vehicle.salesman_name,
-    Customer: vehicle.customer_name,
-    D2D: vehicle.is_d2d ? "Yes" : "No",
-    "BG Date": vehicle.bg_date ?? "",
-    "Shipment ETD": vehicle.shipment_etd_pkg ?? "",
-    "Shipment ETA": vehicle.shipment_eta_kk_twu_sdk ?? "",
-    "Outlet Received Date": vehicle.date_received_by_outlet ?? "",
-    "Registration Date": vehicle.reg_date ?? "",
-    "Delivery Date": vehicle.delivery_date ?? "",
-    "Disbursement Date": vehicle.disb_date ?? "",
-    "BG to Delivery": vehicle.bg_to_delivery ?? "",
-    "BG to Shipment ETD": vehicle.bg_to_shipment_etd ?? "",
-    "ETD to Outlet Received": vehicle.etd_to_outlet_received ?? "",
-    "Outlet Received to Registration": vehicle.outlet_received_to_reg ?? "",
-    "Registration to Delivery": vehicle.reg_to_delivery ?? "",
-    "ETD to ETA": vehicle.etd_to_eta ?? "",
-    "ETA to Outlet Received": vehicle.eta_to_outlet_received ?? "",
-    "Outlet Received to Delivery": vehicle.outlet_received_to_delivery ?? "",
-    "BG to Disbursement": vehicle.bg_to_disb ?? "",
-    "Delivery to Disbursement": vehicle.delivery_to_disb ?? "",
-  }));
+export function buildVehicleExplorerExportRows(
+  vehicles: WorkbookExplorerRow[],
+  columns: WorkbookExplorerColumn[] = buildWorkbookExplorerColumns(vehicles, buildFilterOptions(vehicles)),
+) {
+  return vehicles.map((vehicle) => {
+    const row: Record<string, string | number | boolean | null | undefined> = {};
+    for (const column of columns) {
+      row[column.label] = formatWorkbookCellForExport(getWorkbookCellValue(vehicle, column.key), column.kind);
+    }
+    return row;
+  });
+}
+
+function matchesDateRange(value: string | undefined, range: ExplorerDateRangeFilter) {
+  if (!value) {
+    return false;
+  }
+  if (range.from && value < range.from) {
+    return false;
+  }
+  if (range.to && value > range.to) {
+    return false;
+  }
+  return true;
+}
+
+function matchesNumberRange(value: number | null | undefined, range: ExplorerNumberRangeFilter) {
+  if (value == null) {
+    return false;
+  }
+  if (typeof range.min === "number" && value < range.min) {
+    return false;
+  }
+  if (typeof range.max === "number" && value > range.max) {
+    return false;
+  }
+  return true;
+}
+
+function matchesWorkbookSearchTerm(vehicle: WorkbookExplorerRow, term: string) {
+  const normalizedTerm = term.toLowerCase();
+  const values: Array<string | number | boolean | null | undefined> = [
+    vehicle.chassis_no,
+    vehicle.branch_code,
+    vehicle.model,
+    vehicle.payment_method,
+    vehicle.salesman_name,
+    vehicle.customer_name,
+    vehicle.remark,
+    vehicle.bg_date,
+    vehicle.shipment_etd_pkg,
+    vehicle.shipment_eta_kk_twu_sdk,
+    vehicle.date_received_by_outlet,
+    vehicle.reg_date,
+    vehicle.delivery_date,
+    vehicle.disb_date,
+    vehicle.source_row_id,
+    vehicle.variant,
+    vehicle.dealer_transfer_price,
+    vehicle.full_payment_type,
+    vehicle.shipment_name,
+    vehicle.lou,
+    vehicle.contra_sola,
+    vehicle.reg_no,
+    vehicle.invoice_no,
+    vehicle.obr,
+    vehicle.is_d2d ? "yes" : "no",
+    ...Object.values(vehicle.source_values ?? {}),
+  ];
+
+  return values.some((value) => String(value ?? "").toLowerCase().includes(normalizedTerm));
+}
+
+function matchesWorkbookColumnFilter(
+  vehicle: WorkbookExplorerRow,
+  field: string,
+  kind: WorkbookExplorerColumnKind,
+  filter: string | boolean | ExplorerDateRangeFilter | ExplorerNumberRangeFilter | undefined,
+) {
+  const value = getWorkbookCellValue(vehicle, field);
+
+  if (typeof filter === "string") {
+    if (kind === "select") {
+      return String(value ?? "") === filter;
+    }
+    return String(value ?? "").toLowerCase().includes(filter.toLowerCase());
+  }
+
+  if (typeof filter === "boolean") {
+    return Boolean(value) === filter;
+  }
+
+  if (!filter) {
+    return true;
+  }
+
+  if ("from" in filter || "to" in filter) {
+    return matchesDateRange(typeof value === "string" ? value : undefined, filter as ExplorerDateRangeFilter);
+  }
+
+  if ("min" in filter || "max" in filter) {
+    const numericValue = typeof value === "number" ? value : Number(value ?? NaN);
+    return matchesNumberRange(Number.isFinite(numericValue) ? numericValue : null, filter as ExplorerNumberRangeFilter);
+  }
+
+  return true;
+}
+
+function compareWorkbookCellValues(
+  leftRaw: string | number | boolean | null | undefined,
+  rightRaw: string | number | boolean | null | undefined,
+  kind?: WorkbookExplorerColumnKind,
+) {
+  if (kind === "boolean") {
+    return Number(Boolean(leftRaw)) - Number(Boolean(rightRaw));
+  }
+
+  if (kind === "number") {
+    return Number(leftRaw ?? 0) - Number(rightRaw ?? 0);
+  }
+
+  if (kind === "date") {
+    const leftValue = String(leftRaw ?? "");
+    const rightValue = String(rightRaw ?? "");
+    return leftValue.localeCompare(rightValue);
+  }
+
+  if (kind === "select" || typeof leftRaw === "string" || typeof rightRaw === "string") {
+    const leftValue = String(leftRaw ?? "");
+    const rightValue = String(rightRaw ?? "");
+    return leftValue.localeCompare(rightValue);
+  }
+
+  const leftValue = Number(leftRaw ?? 0);
+  const rightValue = Number(rightRaw ?? 0);
+  return leftValue - rightValue;
+}
+
+function formatWorkbookCellForExport(
+  value: string | number | boolean | null | undefined,
+  kind: WorkbookExplorerColumnKind,
+) {
+  if (value == null) {
+    return "";
+  }
+
+  if (kind === "boolean") {
+    return value ? "Yes" : "No";
+  }
+
+  return String(value);
 }
 
 export function serializeCsvRows(rows: Array<Record<string, string | number | boolean | null | undefined>>) {
@@ -605,8 +1212,19 @@ export function serializeCsvRows(rows: Array<Record<string, string | number | bo
   }
 
   const columns = Object.keys(rows[0]);
+  const sanitizeCsvValue = (value: string) => {
+    const trimmed = value.trimStart();
+    if (trimmed.length > 0 && /^[=+\-@]/.test(trimmed)) {
+      return `'${value}`;
+    }
+    if (/^[\t\r]/.test(value)) {
+      return `'${value}`;
+    }
+    return value;
+  };
+
   const escapeCell = (value: string | number | boolean | null | undefined) => {
-    const text = value == null ? "" : String(value);
+    const text = value == null ? "" : typeof value === "string" ? sanitizeCsvValue(value) : String(value);
     if (!/[",\n\r]/.test(text)) {
       return text;
     }

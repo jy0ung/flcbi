@@ -65,7 +65,7 @@ export async function processImportPreviewJob(job: Job<ImportPreviewJobPayload>)
 
   try {
     const workbook = await downloadImportWorkbook(client, importJob.storage_path);
-    const parsed = parseWorkbook(workbook);
+    const parsed = await parseWorkbook(workbook);
     const branchIdByCode = await fetchBranchIdByCode(client, importJob.company_id);
 
     await clearImportPreviewArtifacts(client, importJob.company_id, importJob.id);
