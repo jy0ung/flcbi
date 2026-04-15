@@ -16,20 +16,27 @@ This repository is being reshaped from a single business-intelligence applicatio
 - `src/modules/auto-aging/routes.tsx` defines the current active module routes.
 - `src/modules/admin/routes.tsx` defines admin routes with role enforcement.
 
+## Auto Aging data flow
+
+- `src/modules/auto-aging/services/mappers.ts` converts database rows into typed module entities.
+- `src/modules/auto-aging/services/repository.ts` owns Supabase reads and writes for the Auto Aging module.
+- `src/modules/auto-aging/hooks/useAutoAgingData.ts` owns module state and composes repository calls.
+- `src/contexts/DataContext.tsx` is now a thin compatibility wrapper over the module hook.
+
 ## Why this refactor exists
 
-The original app worked well as a prototype, but its routing and module definitions were tightly coupled to a single `App.tsx` file and a demo-data source. UBS needs clearer boundaries between:
+The original app worked well as a prototype, but its routing and data access were tightly coupled to app-wide files. UBS needs clearer boundaries between:
 
 - platform shell
 - platform auth and role checks
 - module registration
 - domain-specific routes
-- future domain-specific data services
+- domain-specific data services
 
 ## Next refactor targets
 
-1. Move large shared data contexts into domain services and query hooks.
-2. Replace remaining demo-backed configuration with database-backed configuration.
-3. Add company bootstrap, invitations, and module enablement flows.
-4. Introduce server-side import jobs for heavier data processing.
-5. Split page implementations under their respective modules as the suite expands.
+1. Replace remaining demo-backed configuration with database-backed configuration.
+2. Add company bootstrap, invitations, and module enablement flows.
+3. Introduce server-side import jobs for heavier data processing.
+4. Split page implementations under their respective modules as the suite expands.
+5. Add module-scoped tests around repository and hook behavior.
